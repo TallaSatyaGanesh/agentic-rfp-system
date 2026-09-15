@@ -1,0 +1,37 @@
+# Python & Virtual Environments
+backend/venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Node & Frontend
+frontend/node_modules/
+node_modules/
+frontend/dist/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment Variables & Secrets
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# Local Storage Runtime Data (preserves structure and sample collateral)
+backend/storage/uploads/rfp/*
+!backend/storage/uploads/rfp/.gitkeep
+backend/storage/exports/*
+!backend/storage/exports/.gitkeep
+backend/rfp_system.db
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

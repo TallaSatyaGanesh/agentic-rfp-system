@@ -1,0 +1,499 @@
+import re
+from typing import Dict, Any, List, Optional, Set
+from datetime import datetime, timezone
+from pydantic import BaseModel, Field
+from langchain_core.messages import SystemMessage, HumanMessage
+from app.agents.state import RFPProposalState
+from app.agents.llm_factory import LLMFactory
+from app.core.prompts import EXTRACTION_AGENT_PROMPT
+from app.models.schemas import ExtractionAgentOutput, RFPMetadata, RawClause, ExtractedBlock
+from app.services.document_parser import DocumentParserService
+
+# Guardrail: Legacy fictional placeholders that must NEVER appear in real or fallback metadata
+PROHIBITED_FICTIONAL_STRINGS = [
+    "Enterprise Cloud & Digital Transformation RFP",
+    "Global Logistics & Transportation Authority",
+    "October 31, 2026 at 5:00 PM EST",
+    "Enterprise-wide hybrid cloud deployment and SLA-governed support"
+]
+
+class ExtractedClauseBatch(BaseModel):
+    clauses: List[RawClause] = Field(
+        default_factory=list,
+        description="Candidate requirement clauses extracted verbatim from the document text"
+    )
+
+def extract_rfp_node(state: RFPProposalState) -> Dict[str, Any]:
+    """
+    Agent 1: RFP Document Extraction Agent
+    Extracts structural hierarchy, RFP metadata, and candidate requirement clauses
+    across the ENTIRE parsed RFP document while preserving page and section traceability.
+    """
+    file_path = state["file_path"]
+    rfp_id = state["rfp_id"]
+
+    # 1. Parse document into layout-annotated blocks across ALL pages
+    blocks = DocumentParserService.parse_document(file_path)
+    if not blocks:
+        empty_meta = RFPMetadata(
+            title="INFORMATION REQUIRED",
+            issuer="INFORMATION REQUIRED",
+            submission_deadline=None,
+            budget_or_scope=None,
+            evaluation_criteria=[],
+            summary="INFORMATION REQUIRED"
+        )
+        return {
+            "metadata": empty_meta.model_dump(),
+            "raw_clauses": [],
+            "active_agent": "Extraction Agent",
+            "workflow_status": "CLASSIFYING",
+            "logs": state.get("logs", []) + [{
+                "agent": "Extraction Agent",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "action": "Parsed 0 blocks from document. Metadata marked INFORMATION REQUIRED."
+            }]
+        }
+
+    # 2. Extract Metadata (from introductory content and criteria sections)
+    metadata = _extract_metadata(blocks)
+
+    # 3. Extract Candidate Clauses across the ENTIRE document (Full-Document Strategy)
+    raw_clauses = _extract_all_clauses(blocks)
+
+    # 4. Final safety sanity check: ensure no prohibited fictional strings exist
+    metadata = _sanitize_metadata(metadata)
+
+    log_entry = {
+        "agent": "Extraction Agent",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "action": f"Extracted metadata and identified {len(raw_clauses)} candidate clauses across {len(blocks)} blocks covering all pages."
+    }
+
+    return {
+        "metadata": metadata.model_dump(),
+        "raw_clauses": [c.model_dump() for c in raw_clauses],
+        "active_agent": "Extraction Agent",
+        "workflow_status": "CLASSIFYING",
+        "logs": state.get("logs", []) + [log_entry]
+    }
+
+
+def _extract_metadata(blocks: List[ExtractedBlock]) -> RFPMetadata:
+    """
+    Extracts metadata from actual document blocks.
+    Uses LLM with structured output when available, falling back strictly to
+    rule-based extraction from the actual text (no fictional defaults).
+    """
+    # Select introductory blocks (pages 1-3 or first 20 blocks)
+    intro_blocks = [b for b in blocks if b.page_number <= 3]
+    if not intro_blocks:
+        intro_blocks = blocks[:20]
+
+    # Also include any blocks across the entire document mentioning evaluation or criteria
+    criteria_blocks = [
+        b for b in blocks 
+        if b not in intro_blocks and any(k in (b.section_title + " " + b.text).lower() for k in ["evaluation", "criteria", "scoring", "award criteria"])
+    ]
+
+    meta_context_blocks = intro_blocks + criteria_blocks
+    context_text = "\n\n".join([f"[{b.section_title} - Page {b.page_number}]\n{b.text}" for b in meta_context_blocks])[:6000]
+
+    llm = LLMFactory.get_chat_model()
+    if llm:
+        try:
+            structured_meta_llm = llm.with_structured_output(RFPMetadata)
+            prompt = (
+                "Analyze the following RFP document segments and extract the official metadata.\n"
+                "CRITICAL RULES:\n"
+                "- Extract ONLY information explicitly stated in the text.\n"
+                "- If title or issuer is not found, set it to 'INFORMATION REQUIRED'.\n"
+                "- If submission deadline or budget/scope is not mentioned, set it to null.\n"
+                "- If evaluation criteria are not stated, return an empty list [].\n"
+                "- If summary cannot be derived, set it to 'INFORMATION REQUIRED'.\n"
+                "- NEVER invent or assume fictional RFP titles, organizations, dates, or criteria.\n\n"
+                f"Document Segments:\n{context_text}"
+            )
+            result: RFPMetadata = structured_meta_llm.invoke([
+                SystemMessage(content=EXTRACTION_AGENT_PROMPT),
+                HumanMessage(content=prompt)
+            ])
+            # Validate LLM result against empty/hallucinated values
+            if result and result.title and result.title != "INFORMATION REQUIRED":
+                return _sanitize_metadata(result)
+        except Exception as e:
+            print(f"[Agent 1: Extraction] LLM metadata extraction error, using rule-based extractor: {e}")
+
+    # Fallback to rule-based extraction strictly derived from document text
+    return _fallback_metadata(blocks, context_text)
+
+
+def _fallback_metadata(blocks: List[ExtractedBlock], context_text: str) -> RFPMetadata:
+    """
+    Extracts metadata strictly from the actual parsed text of the document.
+    Never invents or hardcodes fictional defaults.
+    """
+    full_text = context_text if context_text else "\n\n".join([b.text for b in blocks[:25]])
+
+    # 1. Title Extraction
+    title = None
+    title_match = re.search(
+        r'(?im)^\s*(?:TITLE|PROJECT(?:\s+TITLE)?|RFP\s+TITLE|NAME\s+OF\s+(?:PROJECT|TENDER)|SOLICITATION\s+NAME)[\s:\-–—]+([^\n\r]+)',
+        full_text
+    )
+    if title_match:
+        title = title_match.group(1).strip().strip('"\'')
+    else:
+        # Check for explicit REQUEST FOR PROPOSAL / RFP / TENDER lines with titles
+        rfp_line_match = re.search(
+            r'(?im)^\s*(?:REQUEST\s+FOR\s+PROPOSALS?|RFP|TENDER|INVITATION\s+TO\s+BID|SOLICITATION)[\s:\-–—]+([^\n\r]+)',
+            full_text
+        )
+        if rfp_line_match:
+            candidate = rfp_line_match.group(1).strip().strip('"\'()')
+            if len(candidate) > 4 and not candidate.isupper() and "document ref" not in candidate.lower():
+                title = candidate
+
+    if not title:
+        # Check early heading blocks on page 1
+        for b in blocks:
+            if b.page_number == 1 and b.block_type == "heading":
+                candidate = b.text.strip().strip('# \t\r\n"\'')
+                lower_cand = candidate.lower()
+                if (
+                    len(candidate) >= 8 and len(candidate) <= 120
+                    and not lower_cand.startswith("section")
+                    and not lower_cand.startswith("page")
+                    and not lower_cand.startswith("document ref")
+                    and "table of contents" not in lower_cand
+                ):
+                    title = candidate
+                    break
+
+    if not title:
+        title = "INFORMATION REQUIRED"
+
+    # 2. Issuer Extraction
+    issuer = None
+    issuer_match = re.search(
+        r'(?im)^\s*(?:ISSUED\s+BY|CLIENT|ORGANIZATION|AGENCY|AUTHORITY|PROCURING\s+ENTITY|PROCURING\s+AGENCY|BUYER|ISSUING\s+ORGANIZATION)[\s:\-–—]+([^\n\r]+)',
+        full_text
+    )
+    if issuer_match:
+        issuer = issuer_match.group(1).strip().strip('"\'.,')
+    else:
+        # Check natural language invitation sentences
+        agency_pattern = re.search(
+            r'(?i)The\s+([A-Z][A-Za-z0-9\s&,\.\-–—]+?(?:Authority|Agency|Department|Ministry|Corporation|Commission|Board|District|Administration|Council|Foundation|Institute|Services|LLC|Inc|Ltd))\s+(?:invites|requests|issues|is\s+seeking|solicits|hereby\s+issues)',
+            full_text
+        )
+        if agency_pattern:
+            issuer = agency_pattern.group(1).strip().strip('"\'.,')
+
+    if not issuer:
+        issuer = "INFORMATION REQUIRED"
+
+    # 3. Submission Deadline Extraction
+    deadline = None
+    deadline_match = re.search(
+        r'(?im)^\s*(?:DUE\s+DATE|SUBMISSION\s+DEADLINE|CLOSING\s+DATE|PROPOSALS?\s+DUE|DEADLINE\s+FOR\s+SUBMISSION|RESPONSE\s+DEADLINE)[\s:\-–—]+([^\n\r]+)',
+        full_text
+    )
+    if deadline_match:
+        deadline = deadline_match.group(1).strip().strip('"\'.,')
+    else:
+        dl_phrase_match = re.search(
+            r'(?im)(?:due\s+on\s+or\s+before|submitted\s+no\s+later\s+than|closing\s+time\s+and\s+date\s+is)[\s:\-–—]+([^\n\r\.]+)',
+            full_text
+        )
+        if dl_phrase_match:
+            deadline = dl_phrase_match.group(1).strip().strip('"\'.,')
+
+    # 4. Budget or Scope Extraction
+    budget = None
+    budget_match = re.search(
+        r'(?im)^\s*(?:ESTIMATED\s+BUDGET|BUDGET|NOT\s+TO\s+EXCEED|CONTRACT\s+VALUE|MAXIMUM\s+VALUE|ENGAGEMENT\s+SCOPE|SCOPE\s+OF\s+WORK)[\s:\-–—]+([^\n\r]+)',
+        full_text
+    )
+    if budget_match:
+        budget = budget_match.group(1).strip().strip('"\'.,')
+    else:
+        curr_match = re.search(
+            r'(?i)(?:budget|contract\s+value|estimated\s+value)[\s:\-–—]*(?:is|of)?\s*([\$£€]\s*[\d,]+(?:\.\d+)?(?:\s*(?:million|billion|k|thousand))?)',
+            full_text
+        )
+        if curr_match:
+            budget = curr_match.group(1).strip()
+
+    # 5. Evaluation Criteria Extraction
+    evaluation_criteria = []
+    # Find criteria sections
+    criteria_sections = [
+        b for b in blocks 
+        if any(k in (b.section_title + " " + b.text).lower() for k in ["evaluation criteria", "selection criteria", "award criteria", "scoring criteria", "evaluation"])
+    ]
+    for cb in criteria_sections:
+        lines = cb.text.split("\n")
+        for line in lines:
+            line_str = line.strip()
+            # Match numbered or bulleted criteria with weight/percent e.g. "1. Technical Architecture (30%)"
+            crit_match = re.search(r'(?i)^\s*(?:\d+[\.\)]\s*|[-*•]\s*)?([^\n\r]+?\(\s*\d+%\s*\)|[^\n\r]+?\b\d+\s*(?:%|percent|points\b)[^\n\r]*)', line_str)
+            if crit_match:
+                cleaned_crit = crit_match.group(0).strip().strip('-*• \t')
+                if cleaned_crit and cleaned_crit not in evaluation_criteria:
+                    evaluation_criteria.append(cleaned_crit)
+
+    # 6. Summary Extraction
+    summary = None
+    # Search for introductory summary blocks
+    intro_summary_blocks = [
+        b for b in blocks 
+        if any(k in b.section_title.lower() for k in ["executive summary", "introduction", "background", "objective", "purpose", "section 1"])
+        and len(b.text.split()) >= 10
+    ]
+    if intro_summary_blocks:
+        first_block_text = intro_summary_blocks[0].text.strip()
+        # Remove any section header line if repeated
+        lines = [l.strip() for l in first_block_text.split("\n") if l.strip() and not l.strip().lower().startswith("section")]
+        if lines:
+            summary = " ".join(lines[:3])[:350].strip()
+
+    if not summary:
+        # Try taking first substantive paragraph from page 1
+        for b in blocks:
+            if b.page_number == 1 and len(b.text.split()) >= 15:
+                lower = b.text.lower()
+                if not lower.startswith("request for proposal") and not lower.startswith("title:") and not lower.startswith("issued by:"):
+                    summary = b.text.strip()[:350].strip()
+                    break
+
+    if not summary:
+        summary = "INFORMATION REQUIRED"
+
+    return RFPMetadata(
+        title=title,
+        issuer=issuer,
+        submission_deadline=deadline,
+        budget_or_scope=budget,
+        evaluation_criteria=evaluation_criteria,
+        summary=summary
+    )
+
+
+def _extract_all_clauses(blocks: List[ExtractedBlock]) -> List[RawClause]:
+    """
+    Extracts candidate clauses across the ENTIRE document (all pages).
+    Processes blocks in batches to keep within context limits if LLM is active,
+    and runs a comprehensive rule-based extractor to guarantee complete,
+    traceable coverage without any hallucinations.
+    """
+    raw_clauses: List[RawClause] = []
+    seen_signatures: Set[str] = set()
+
+    llm = LLMFactory.get_chat_model()
+    batches = _create_block_batches(blocks, max_blocks_per_batch=10, max_chars_per_batch=3500)
+
+    # 1. LLM Batch Extraction (if available)
+    if llm:
+        for batch in batches:
+            batch_text = "\n\n".join([
+                f"[Block {idx + 1} | Page {b.page_number} | Section: {b.section_title}]\n{b.text}"
+                for idx, b in enumerate(batch)
+            ])
+            try:
+                structured_batch_llm = llm.with_structured_output(ExtractedClauseBatch)
+                prompt = (
+                    "You are an expert RFP requirement clause extractor. Extract all candidate requirement clauses "
+                    "verbatim from the following document blocks. For each clause:\n"
+                    "- Extract exact verbatim text (never summarize, alter, or fabricate requirements).\n"
+                    "- Set source_page to the exact Page number indicated in the block header.\n"
+                    "- Set source_section to the exact Section indicated in the block header.\n\n"
+                    f"Document Blocks:\n{batch_text}"
+                )
+                batch_result: ExtractedClauseBatch = structured_batch_llm.invoke([
+                    SystemMessage(content=EXTRACTION_AGENT_PROMPT),
+                    HumanMessage(content=prompt)
+                ])
+                if batch_result and batch_result.clauses:
+                    for c in batch_result.clauses:
+                        norm_sig = _normalize_clause_sig(c.text)
+                        if norm_sig and norm_sig not in seen_signatures:
+                            # Validate source_page and source_section
+                            if not c.source_page or c.source_page <= 0:
+                                c.source_page = batch[0].page_number
+                            if not c.source_section or c.source_section == "General":
+                                c.source_section = batch[0].section_title
+                            seen_signatures.add(norm_sig)
+                            raw_clauses.append(c)
+            except Exception as e:
+                print(f"[Agent 1: Extraction] LLM clause batch error: {e}")
+
+    # 2. Rule-Based Clause Extraction across ALL blocks
+    # Guarantees full-document coverage, even when LLM is offline or skips blocks
+    rule_clauses = _extract_clauses_rule_based(blocks)
+    for rc in rule_clauses:
+        norm_sig = _normalize_clause_sig(rc.text)
+        if norm_sig and norm_sig not in seen_signatures:
+            seen_signatures.add(norm_sig)
+            raw_clauses.append(rc)
+
+    # 3. Canonical numbering and final formatting
+    formatted_clauses: List[RawClause] = []
+    for idx, c in enumerate(raw_clauses, start=1):
+        formatted_clauses.append(
+            RawClause(
+                clause_id=f"CLAUSE-{idx:03d}",
+                text=c.text.strip(),
+                source_page=max(1, c.source_page),
+                source_section=c.source_section.strip() if c.source_section else "General"
+            )
+        )
+
+    return formatted_clauses
+
+
+def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> List[RawClause]:
+    """
+    Comprehensive rule-based clause extraction operating across the ENTIRE document.
+    Never invents text; preserves source page and section for every clause.
+    """
+    clauses: List[RawClause] = []
+    
+    # Imperatives & obligation modal verbs
+    imperative_pattern = re.compile(
+        r'\b(?:shall|must|required|mandatory|will|should|agrees\s+to|is\s+required\s+to|are\s+required\s+to|covenants|undertakes|liability|penalty|sla)\b',
+        re.IGNORECASE
+    )
+
+    # Numbered clause headers e.g. "2.1 High Availability:", "REQ-01:", "3.2.1"
+    numbered_clause_pattern = re.compile(
+        r'^\s*(?:(?:\d+\.){1,3}\d*|(?:REQ|RFP|SPEC|DELIV|SEC|TECH|FUNC|LEGAL|SLA)[-_:\s])',
+        re.IGNORECASE
+    )
+
+    # Requirement-specific section indicators
+    req_section_keywords = [
+        "requirement", "specification", "technical", "security", "functional", 
+        "legal", "terms", "deliverable", "scope of work", "compliance", "sla", "infrastructure"
+    ]
+
+    for b in blocks:
+        text = b.text.strip()
+        if not text or len(text) < 20:
+            continue
+
+        # Skip document title/metadata-only blocks
+        lower_text = text.lower()
+        if (
+            lower_text.startswith("request for proposal")
+            or lower_text.startswith("document ref:")
+            or lower_text.startswith("issued by:")
+            or lower_text.startswith("due date:")
+            or lower_text.startswith("table of contents")
+            or lower_text == "section 1: executive summary & procurement objective"
+        ):
+            continue
+
+        is_req_section = any(k in b.section_title.lower() for k in req_section_keywords)
+
+        # Split block into individual numbered items or bullet points if present
+        lines = [l.strip() for l in text.split("\n") if l.strip()]
+        
+        # Check if block contains distinct numbered or bulleted items
+        item_chunks: List[str] = []
+        current_chunk: List[str] = []
+
+        for line in lines:
+            is_item_start = (
+                numbered_clause_pattern.match(line)
+                or line.startswith("•")
+                or line.startswith("- ")
+                or line.startswith("* ")
+            )
+            if is_item_start and current_chunk:
+                item_chunks.append(" ".join(current_chunk))
+                current_chunk = [line]
+            else:
+                current_chunk.append(line)
+        if current_chunk:
+            item_chunks.append(" ".join(current_chunk))
+
+        for chunk in item_chunks:
+            chunk_clean = chunk.strip().strip('-*• \t')
+            if len(chunk_clean.split()) < 4 or len(chunk_clean) < 20:
+                continue
+
+            # Qualifying condition:
+            # 1. Contains RFC 2119 imperatives / obligation modals
+            # 2. OR is explicitly numbered (e.g. 2.1 ...)
+            # 3. OR is in a requirement section and contains substantive specifications
+            has_imperatives = bool(imperative_pattern.search(chunk_clean))
+            has_numbering = bool(numbered_clause_pattern.match(chunk_clean))
+
+            if has_imperatives or has_numbering or (is_req_section and len(chunk_clean.split()) >= 6):
+                clauses.append(
+                    RawClause(
+                        clause_id="",  # Will be assigned canonical sequential ID during deduplication
+                        text=chunk_clean,
+                        source_page=b.page_number,
+                        source_section=b.section_title
+                    )
+                )
+
+    return clauses
+
+
+def _create_block_batches(
+    blocks: List[ExtractedBlock],
+    max_blocks_per_batch: int = 10,
+    max_chars_per_batch: int = 3500
+) -> List[List[ExtractedBlock]]:
+    """Partitions blocks into size-bounded batches to prevent LLM context overflow."""
+    batches: List[List[ExtractedBlock]] = []
+    current_batch: List[ExtractedBlock] = []
+    current_chars = 0
+
+    for b in blocks:
+        b_len = len(b.text)
+        if current_batch and (len(current_batch) >= max_blocks_per_batch or (current_chars + b_len) > max_chars_per_batch):
+            batches.append(current_batch)
+            current_batch = []
+            current_chars = 0
+        current_batch.append(b)
+        current_chars += b_len
+
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
+
+
+def _normalize_clause_sig(text: str) -> str:
+    """Computes a normalized signature for deduplication."""
+    cleaned = re.sub(r'[^a-z0-9]', '', text.lower())
+    return cleaned[:100]
+
+
+def _sanitize_metadata(meta: RFPMetadata) -> RFPMetadata:
+    """
+    Strict safety check: replaces any legacy prohibited fictional placeholder
+    with explicit 'INFORMATION REQUIRED' or None.
+    """
+    for prohibited in PROHIBITED_FICTIONAL_STRINGS:
+        if prohibited.lower() in meta.title.lower():
+            meta.title = "INFORMATION REQUIRED"
+        if prohibited.lower() in meta.issuer.lower():
+            meta.issuer = "INFORMATION REQUIRED"
+        if meta.submission_deadline and prohibited.lower() in meta.submission_deadline.lower():
+            meta.submission_deadline = None
+        if meta.budget_or_scope and prohibited.lower() in meta.budget_or_scope.lower():
+            meta.budget_or_scope = None
+
+    if not meta.title or not meta.title.strip():
+        meta.title = "INFORMATION REQUIRED"
+    if not meta.issuer or not meta.issuer.strip():
+        meta.issuer = "INFORMATION REQUIRED"
+    if not meta.summary or not meta.summary.strip():
+        meta.summary = "INFORMATION REQUIRED"
+
+    return meta

@@ -1,0 +1,23 @@
+# ACME CLOUD SOLUTIONS - COMPANY CAPABILITY STATEMENT & INFRASTRUCTURE OVERVIEW
+
+## 1. Executive Overview & Core Competencies
+Acme Cloud Solutions is an enterprise cloud systems integrator and software engineering provider specializing in mission-critical digital transformation, resilient distributed architectures, and automated DevOps operations. We possess over 12 years of production experience designing and managing multi-tenant cloud platforms for Fortune 500 and public sector organizations.
+
+## 2. Technical Architecture & High Availability
+- Infrastructure Topology: Containerized microservices orchestrated via Kubernetes (EKS / AKS / GKE) deployed across multiple availability zones.
+- Uptime SLA: Guaranteed production service level agreement of 99.95% monthly uptime with automated health probes and zero-downtime rolling deployments.
+- Disaster Recovery & Business Continuity:
+  * Cross-region automated data replication.
+  * Recovery Time Objective (RTO): Under 15 minutes for critical service failover.
+  * Recovery Point Objective (RPO): Under 5 minutes for transaction databases.
+- Database & Storage: Managed PostgreSQL / MySQL with active-standby replication, automated daily snapshots with 35-day point-in-time recovery, and distributed object storage (S3-compatible) with versioning.
+- Scalability: Horizontal Pod Autoscaler (HPA) with dynamic resource scaling based on CPU, memory, and custom Prometheus metrics.
+
+## 3. API & Enterprise Integration Capabilities
+- RESTful APIs: OpenAPI 3.0 documented JSON REST services with rate limiting, throttling, and API gateway mediation.
+- Real-time Telemetry: WebSocket and SSE streaming endpoints for event-driven notifications and dashboards.
+- Legacy Systems Integration: Enterprise Service Bus (ESB) adapters and message queuing via Apache Kafka and RabbitMQ.
+
+## 4. Past Performance & Verified Case Studies
+- Global Financial Services Portal: Re-architected core settlement platform handling 15M daily transactions with zero unplanned downtime over 24 consecutive months.
+- State Transportation Logistics Network: Migrated 45 legacy departmental applications to hybrid cloud, reducing operational maintenance expenditures by 38%.
