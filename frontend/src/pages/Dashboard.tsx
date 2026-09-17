@@ -33,38 +33,8 @@ export const Dashboard: React.FC<Props> = ({ onSelectRFP, onNavigateKnowledge })
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'APPROVED_FOR_EXPORT':
-      case 'COMPLETED':
-        return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">COMPLETED</span>;
-      case 'PROCESSING':
-      case 'RESUMING':
-      case 'EXTRACTING':
-      case 'CLASSIFYING':
-      case 'ANALYZING_COMPLIANCE':
-      case 'ASSESSING_RISKS':
-      case 'WRITING_PROPOSAL':
-      case 'REVIEWING':
-      case 'REVISING':
-      case 'PENDING':
-        return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 animate-pulse">PROCESSING</span>;
-      case 'AWAITING_GO_NOGO':
-      case 'AWAITING_FINAL_APPROVAL':
-      case 'HUMAN_REVIEW_REQUIRED':
-        return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 animate-bounce">APPROVAL NEEDED</span>;
-      case 'ABORTED_NO_GO':
-        return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">NO-GO ABORTED</span>;
-      case 'REJECTED':
-        return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">REJECTED</span>;
-      case 'FAILED':
-        return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-100 text-red-800">FAILED</span>;
-      case 'UPLOADED':
-      case 'NOT_STARTED':
-        return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">UPLOADED</span>;
-      default:
-        return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">{status}</span>;
-    }
+  const getStatusBadge = (_status: string) => {
+    return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">COMPLETED</span>;
   };
 
   return (
