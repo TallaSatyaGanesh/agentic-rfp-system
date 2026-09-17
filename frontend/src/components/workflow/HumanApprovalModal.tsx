@@ -55,14 +55,22 @@ export const HumanApprovalModal: React.FC<Props> = ({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [expandedFindings, setExpandedFindings] = useState<Record<string, boolean>>({});
 
-  if (!isOpen || !status) return null;
+  const ALLOWED_APPROVAL_STATES = [
+    'AWAITING_GO_NOGO',
+    'AWAITING_FINAL_APPROVAL',
+    'HUMAN_REVIEW_REQUIRED'
+  ];
 
-  // Determine Gate Type
-  const isGoNoGo = status.interrupt_type === 'GO_NOGO' || status.status === 'AWAITING_GO_NOGO';
+  if (!isOpen || !status || !ALLOWED_APPROVAL_STATES.includes(status.status)) return null;
+
+  // Determine Gate Type explicitly
+  const isGoNoGo = status.status === 'AWAITING_GO_NOGO' || (status.interrupt_type === 'GO_NOGO' && status.status !== 'AWAITING_FINAL_APPROVAL');
   const isFinalApproval =
-    status.interrupt_type === 'FINAL_APPROVAL' ||
     status.status === 'AWAITING_FINAL_APPROVAL' ||
-    status.status === 'HUMAN_REVIEW_REQUIRED';
+    status.status === 'HUMAN_REVIEW_REQUIRED' ||
+    (status.interrupt_type === 'FINAL_APPROVAL' && status.status !== 'AWAITING_GO_NOGO');
+
+  if (!isGoNoGo && !isFinalApproval) return null;
 
   // Safely extract ReviewReport from latestProposal if present
   let reviewReport: ReviewReport | null = null;
@@ -331,7 +339,7 @@ export const HumanApprovalModal: React.FC<Props> = ({
                         : 'bg-emerald-100 text-emerald-800'
                     }`}
                   >
-                    {reviewReport?.overall_status || (isHumanReviewRequired ? 'HUMAN_REVIEW_REQUIRED' : 'APPROVED')}
+                    {reviewReport?.overall_status || (isHumanReviewRequired ? 'HUMAN_REVIEW_REQUIRED' : (latestProposal?.review_score ? 'REVIEWED' : 'PENDING_SIGN_OFF'))}
                   </span>
                 </div>
                 <div className="p-3 rounded-xl border border-slate-200 bg-slate-50 text-center">

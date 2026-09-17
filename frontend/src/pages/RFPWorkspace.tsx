@@ -163,9 +163,6 @@ export const RFPWorkspace: React.FC<Props> = ({ rfpId, onBack }) => {
         loadStatus();
         if (['node_completed', 'human_approval_required', 'workflow_finished'].includes(eventType)) {
           loadDataOutputs();
-          if (eventType === 'human_approval_required') {
-            setIsApprovalOpen(true);
-          }
         }
       },
       (connStatus) => {
@@ -234,8 +231,16 @@ export const RFPWorkspace: React.FC<Props> = ({ rfpId, onBack }) => {
         return st;
       });
 
-      if (st.is_interrupted) {
+      const ALLOWED_APPROVAL_STATES: WorkflowState[] = [
+        'AWAITING_GO_NOGO',
+        'AWAITING_FINAL_APPROVAL',
+        'HUMAN_REVIEW_REQUIRED'
+      ];
+
+      if (st.is_interrupted && ALLOWED_APPROVAL_STATES.includes(st.status)) {
         setIsApprovalOpen(true);
+      } else {
+        setIsApprovalOpen(false);
       }
     } catch (err) {
       console.error('Failed to load status:', err);

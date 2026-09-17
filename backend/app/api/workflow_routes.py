@@ -256,6 +256,17 @@ async def run_workflow_async(rfp_id: str, file_path: str):
 
     except Exception as e:
         print(f"[Workflow Runtime Error] {e}")
+        db = SessionLocal()
+        try:
+            rfp = db.query(RFPDocument).filter(RFPDocument.id == rfp_id).first()
+            if rfp:
+                rfp.status = "FAILED"
+                db.commit()
+        except Exception as dbe:
+            print(f"[DB Error setting FAILED status] {dbe}")
+            db.rollback()
+        finally:
+            db.close()
         await broadcast_event(rfp_id, "error", {"error": str(e)})
 
 @router.post("/{rfp_id}/start")
@@ -269,6 +280,15 @@ async def start_workflow(
     if not rfp:
         raise HTTPException(status_code=404, detail="RFP not found")
 
+    import os
+    if not rfp.file_path or not os.path.exists(rfp.file_path):
+        rfp.status = "FAILED"
+        db.commit()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Document file not found at {rfp.file_path or 'unknown location'}"
+        )
+
     rfp.status = "PROCESSING"
     db.commit()
 
@@ -276,21 +296,41 @@ async def start_workflow(
     return {"message": "Workflow started successfully", "rfp_id": rfp_id}
 
 @router.get("/{rfp_id}/status")
-def get_workflow_status(rfp_id: str):
+def get_workflow_status(rfp_id: str, db: Session = Depends(get_db)):
     """Returns current execution state and active checkpoint details."""
+    rfp = db.query(RFPDocument).filter(RFPDocument.id == rfp_id).first()
+
     config = {"configurable": {"thread_id": rfp_id}}
     state = rfp_graph.get_state(config)
     
     if not state or not state.values:
-        return {"status": "NOT_STARTED", "active_agent": "None", "is_interrupted": False}
+        db_status = rfp.status if rfp else "NOT_STARTED"
+        return {
+            "status": db_status,
+            "active_agent": "None",
+            "is_interrupted": False,
+            "interrupt_type": None,
+            "current_version": 0,
+            "revision_count": 0,
+            "compliance_score": 0.0,
+            "logs": []
+        }
 
-    is_interrupted = bool(state.next)
+    status = state.values.get("workflow_status") or (rfp.status if rfp else "PROCESSING")
+
+    # Strict interrupted rule: is_interrupted is True ONLY if state has next node AND status is one of the 3 approval states
+    APPROVAL_STATES = {"AWAITING_GO_NOGO", "AWAITING_FINAL_APPROVAL", "HUMAN_REVIEW_REQUIRED"}
+    is_interrupted = bool(state.next) and (status in APPROVAL_STATES)
+
     interrupt_type = None
     if is_interrupted:
-        interrupt_type = "GO_NOGO" if "human_go_nogo_gate" in state.next else "FINAL_APPROVAL"
+        if "human_go_nogo_gate" in state.next or status == "AWAITING_GO_NOGO":
+            interrupt_type = "GO_NOGO"
+        elif "human_final_approval_gate" in state.next or status in ["AWAITING_FINAL_APPROVAL", "HUMAN_REVIEW_REQUIRED"]:
+            interrupt_type = "FINAL_APPROVAL"
 
     return {
-        "status": state.values.get("workflow_status", "PROCESSING"),
+        "status": status,
         "active_agent": state.values.get("active_agent", "System"),
         "is_interrupted": is_interrupted,
         "interrupt_type": interrupt_type,
