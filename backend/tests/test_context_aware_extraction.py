@@ -97,20 +97,18 @@ def _generate_test_rfp_agentic_system_pdf(output_path: str):
     story.append(Paragraph("4. Implementation Timeline (15%)", styles['Normal']))
     story.append(Spacer(1, 8))
 
-    # 5. Timeline
-    story.append(Paragraph("5. Timeline", styles['Heading2']))
+    # 6. Timeline
+    story.append(Paragraph("6. Timeline", styles['Heading2']))
     story.append(Paragraph("• RFP Issuance: October 1, 2026", styles['Normal']))
     story.append(Paragraph("• Submission Deadline: November 15, 2026", styles['Normal']))
     story.append(Paragraph("• Vendor Selection: December 1, 2026", styles['Normal']))
     story.append(Spacer(1, 8))
 
-    # 6. Vendor Response Instructions
-    story.append(Paragraph("6. Vendor Response Instructions", styles['Heading2']))
-    story.append(Paragraph(
-        "Bidders must submit technical and commercial proposals in separate sealed envelopes or password-protected PDF files. "
-        "All queries must be directed to procurement@abcretail.example.com.",
-        styles['Normal']
-    ))
+    # 7. Vendor Response
+    story.append(Paragraph("7. Vendor Response", styles['Heading2']))
+    story.append(Paragraph("Vendors should clearly state their compliance with each requirement.", styles['Normal']))
+    story.append(Paragraph("Where a requirement cannot be fully confirmed, the vendor should identify the limitation and provide the information or clarification needed.", styles['Normal']))
+    story.append(Paragraph("Vendors must not make unsupported claims.", styles['Normal']))
 
     doc.build(story)
 
@@ -188,7 +186,9 @@ def test_current_16_requirement_rfp_end_to_end():
         assert "Vendor Selection: December 1, 2026" not in all_req_text
 
         # TEST F: Vendor Response instructions are NOT requirements
-        assert "Bidders must submit technical and commercial proposals in separate" not in all_req_text
+        assert "Vendors should clearly state their compliance with each requirement" not in all_req_text
+        assert "Where a requirement cannot be fully confirmed" not in all_req_text
+        assert "Vendors must not make unsupported claims" not in all_req_text
 
         # TEST I: Explicit IDs are preserved
         expected_ids = [
@@ -295,3 +295,63 @@ def test_structurally_different_rfp_without_formal_requirements_table():
         for r in reqs:
             assert r["req_code"].startswith("REQ-")
             assert r["category"] in ["Technical", "Commercial", "Certification", "Delivery", "Contractual"]
+
+
+def test_non_standard_section_name_genuine_requirements():
+    """Verify that an RFP with non-standard section names still extracts genuine requirements accurately."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_path = os.path.join(tmpdir, "Non_Standard_Section_RFP.pdf")
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = []
+
+        story.append(Paragraph("SOLICITATION: ADVANCED FLEET LOGISTICS", styles['Heading1']))
+        story.append(Spacer(1, 10))
+
+        # Completely non-standard section title
+        story.append(Paragraph("Operational Capabilities & Field Enablement", styles['Heading2']))
+        story.append(Paragraph("The vendor must provide on-site technical support during initial deployment.", styles['Normal']))
+        story.append(Paragraph("The platform shall support real-time telemetry ingestion from 5,000 field devices.", styles['Normal']))
+        story.append(Paragraph("The vendor is required to deliver monthly system health audit reports.", styles['Normal']))
+
+        doc.build(story)
+
+        state: RFPProposalState = {
+            "rfp_id": "test_non_standard",
+            "file_path": pdf_path,
+            "metadata": None,
+            "raw_clauses": [],
+            "requirements": [],
+            "compliance_matrix": [],
+            "overall_compliance_score": 0.0,
+            "risks": [],
+            "clarification_questions": [],
+            "go_nogo_decision": None,
+            "go_nogo_notes": None,
+            "proposal_drafts": [],
+            "current_version": 0,
+            "review_reports": [],
+            "revision_count": 0,
+            "max_revisions": 2,
+            "final_approval_decision": None,
+            "human_feedback": None,
+            "active_agent": "Extraction Agent",
+            "workflow_status": "EXTRACTING",
+            "logs": [],
+            "error": None
+        }
+
+        extract_output = extract_rfp_node(state)
+        raw_clauses = extract_output["raw_clauses"]
+
+        assert len(raw_clauses) == 3, f"Expected 3 raw clauses from non-standard section, got {len(raw_clauses)}"
+
+        state["raw_clauses"] = raw_clauses
+        classify_output = classify_requirements_node(state)
+        reqs = classify_output["requirements"]
+
+        assert len(reqs) == 3
+        for r in reqs:
+            assert r["req_code"].startswith("REQ-")
+            assert len(r["text"]) > 10
+

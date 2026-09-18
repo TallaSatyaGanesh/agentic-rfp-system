@@ -380,8 +380,8 @@ def _classify_section_tier(section_title: str) -> str:
     if re.search(r'\b(?:timeline|schedule|key\s+dates|milestones|procurement\s+timeline|due\s+dates?)\b', sec):
         return "CONTEXT_TIMELINE"
 
-    # 4. Instructions / Submission Guidelines / Format / Packaging
-    if re.search(r'\b(?:submission\s+instructions|vendor\s+response\s+instructions|proposal\s+instructions|format\s+of\s+proposal|submission\s+guidelines|instructions\s+to\s+bidders|response\s+format|proposal\s+submission)\b', sec):
+    # 4. Instructions / Submission Guidelines / Format / Packaging / Vendor Response
+    if re.search(r'\b(?:submission\s+instructions|vendor\s+response|vendor\s+instructions|proposal\s+instructions|format\s+of\s+proposal|submission\s+guidelines|instructions\s+to\s+bidders|response\s+format|proposal\s+submission)\b', sec):
         return "CONTEXT_INSTRUCTIONS"
 
     # 5. Formal Requirements / Specifications / Technical / Compliance
@@ -446,6 +446,18 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         re.search(r'\b(?:Req\s*ID|Requirement\s*ID|Item\s*#|Clause\s*#)\b', clean_text, re.IGNORECASE)
         and re.search(r'\b(?:Category|Specification|Description|Mandatory|Priority|Status)\b', clean_text, re.IGNORECASE)
     ) and not has_obligation_modal:
+        return True
+
+    # 6. Vendor Response Instructions & Proposal Answering Meta-Guidelines
+    # (e.g. "Vendors should clearly state their compliance with each requirement", "Vendors must not make unsupported claims", "Where a requirement cannot be fully confirmed, the vendor should identify the limitation...")
+    if (
+        re.search(r'\b(?:state\s+(?:their|its)?\s*compliance|indicate\s+(?:their|its)?\s*compliance|confirm\s+(?:their|its)?\s*compliance)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:unsupported\s+claims|cannot\s+be\s+(?:fully\s+)?confirmed|identify\s+the\s+limitation)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:respond\s+to\s+(?:each|this|every)\s+requirement|address\s+(?:each|all)\s+requirements?\s+in\s+(?:the|their|its)\s+proposal)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:format\s+(?:their|its|the)\s+response|complete\s+(?:the|this)\s+compliance\s+(?:matrix|table))\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:proposals?|bidders?|vendors?|contractors?)\s+(?:shall|must|should|are\s+required\s+to)\s+(?:clearly\s+)?(?:state|explain|describe|detail|indicate)\s+(?:how|their|its|whether|compliance)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:proposals?|bidders?|vendors?)\s+(?:must|shall|should)\s+not\s+make\s+(?:any\s+)?(?:unsupported|false|unverified)\b', clean_text, re.IGNORECASE)
+    ):
         return True
 
     return False
