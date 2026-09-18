@@ -377,8 +377,8 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         re.IGNORECASE
     ))
 
-    # 1. Section / Chapter Title Headers (e.g., "SECTION 2: TECHNICAL & INFRASTRUCTURE REQUIREMENTS", "CHAPTER 5: LEGAL & COMMERCIAL")
-    if re.match(r'^(?:SECTION|CHAPTER)\s+\d+[\s:\-–—]', clean_text, re.IGNORECASE) and not has_obligation_modal:
+    # 1. Section / Chapter Title Headers (e.g., "SECTION 2: TECHNICAL & INFRASTRUCTURE REQUIREMENTS", "Section A: Platform Functional Expectations")
+    if re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART)\s+[A-Za-z0-9]+[\s:\-–—]', clean_text, re.IGNORECASE) and not has_obligation_modal:
         return True
 
     # 2. Subsection Title Headings (e.g., "1. Technical Specifications", "5.1 Commercial Terms")
@@ -393,10 +393,10 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     ) and not has_obligation_modal:
         return True
 
-    # 4. Document Titles & Subtitles (e.g., "System Specification & Commercial Requirements Document", "REQUEST FOR PROPOSAL (RFP)")
+    # 4. Document Titles & Subtitles (e.g., "System Specification & Commercial Requirements Document", "REQUEST FOR PROPOSAL (RFP)", "Scope of Work & Vendor Commitments")
     if (
         re.search(r'\b(?:REQUEST\s+FOR\s+PROPOSAL|SOLICITATION\s+DOCUMENT|TENDER\s+DOCUMENT)\b', clean_text, re.IGNORECASE)
-        or re.search(r'\b(?:System\s+Specification|Requirements\s+Document|Commercial\s+Requirements\s+Document|Specification\s+Document)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:System\s+Specification|Requirements\s+Document|Commercial\s+Requirements\s+Document|Specification\s+Document|Scope\s+of\s+Work|Vendor\s+Commitments)\b', clean_text, re.IGNORECASE)
     ) and not has_obligation_modal:
         return True
 
@@ -412,7 +412,7 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> List[RawClause]
     
     # Imperatives & obligation modal verbs
     imperative_pattern = re.compile(
-        r'\b(?:shall|must|required|mandatory|will|should|agrees\s+to|is\s+required\s+to|are\s+required\s+to|covenants|undertakes|liability|penalty|sla)\b',
+        r'\b(?:shall|must|required|mandatory|will|should|agrees?\s+to|is\s+required\s+to|are\s+required\s+to|is\s+expected\s+to|are\s+expected\s+to|needs?\s+to|responsible\s+for|covenants|undertakes|liability|penalty|sla|warrant(?:s|y)?|guarantee(?:s)?)\b',
         re.IGNORECASE
     )
 
@@ -474,25 +474,37 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> List[RawClause]
             if len(chunk_clean.split()) < 4 or len(chunk_clean) < 20:
                 continue
 
-            if _is_non_requirement_heading_or_criterion(chunk_clean):
-                continue
+            # Sub-split paragraph into individual sentences if multiple distinct obligation modals exist in unnumbered prose
+            sub_chunks = [chunk_clean]
+            modal_count = len(re.findall(r'\b(?:shall|must|required|mandatory|will|should|is\s+required\s+to|are\s+required\s+to|is\s+expected\s+to)\b', chunk_clean, re.IGNORECASE))
+            if modal_count >= 2 and not numbered_clause_pattern.match(chunk_clean):
+                split_sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+(?=[A-Z])', chunk_clean) if s.strip()]
+                if len(split_sents) >= 2:
+                    sub_chunks = split_sents
 
-            # Qualifying condition:
-            # 1. Contains RFC 2119 imperatives / obligation modals
-            # 2. OR is explicitly numbered (e.g. 2.1 ...)
-            # 3. OR is in a requirement section and contains substantive specifications
-            has_imperatives = bool(imperative_pattern.search(chunk_clean))
-            has_numbering = bool(numbered_clause_pattern.match(chunk_clean))
+            for sub_c in sub_chunks:
+                if len(sub_c.split()) < 4 or len(sub_c) < 15:
+                    continue
 
-            if has_imperatives or has_numbering or (is_req_section and len(chunk_clean.split()) >= 6):
-                clauses.append(
-                    RawClause(
-                        clause_id="",  # Will be assigned canonical sequential ID during deduplication
-                        text=chunk_clean,
-                        source_page=b.page_number,
-                        source_section=b.section_title
+                if _is_non_requirement_heading_or_criterion(sub_c):
+                    continue
+
+                # Qualifying condition:
+                # 1. Contains RFC 2119 imperatives / obligation modals
+                # 2. OR is explicitly numbered (e.g. 2.1 ...)
+                # 3. OR is in a requirement section and contains substantive specifications
+                has_imperatives = bool(imperative_pattern.search(sub_c))
+                has_numbering = bool(numbered_clause_pattern.match(sub_c))
+
+                if has_imperatives or has_numbering or (is_req_section and len(sub_c.split()) >= 6):
+                    clauses.append(
+                        RawClause(
+                            clause_id="",  # Will be assigned canonical sequential ID during deduplication
+                            text=sub_c,
+                            source_page=b.page_number,
+                            source_section=b.section_title
+                        )
                     )
-                )
 
     return clauses
 
