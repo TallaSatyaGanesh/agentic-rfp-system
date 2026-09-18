@@ -354,6 +354,47 @@ def _extract_all_clauses(blocks: List[ExtractedBlock]) -> List[RawClause]:
     return formatted_clauses
 
 
+def _classify_section_tier(section_title: str) -> str:
+    """
+    Classifies a section title into structural hierarchy tiers:
+    - CONTEXT_PURPOSE: Purpose, Introduction, Executive Summary, Background, Objective
+    - CONTEXT_EVALUATION: Evaluation Criteria, Selection Criteria, Scoring
+    - CONTEXT_TIMELINE: Timeline, Schedule, Key Dates, Milestones
+    - CONTEXT_INSTRUCTIONS: Vendor Instructions, Submission Guidelines, Proposal Format
+    - FORMAL_REQUIREMENTS: Requirements, System Requirements, Specifications, Compliance Matrix, Terms
+    - SCOPE_OF_WORK: Scope of Work, Scope, Services Required, Vendor Obligations, Technical Approach
+    - GENERAL: Default/unspecified
+    """
+    sec = section_title.strip().lower()
+
+    # 1. Purpose / Introduction / Executive Summary / Overview
+    if re.search(r'\b(?:purpose|introduction|executive\s+summary|background|objective|procurement\s+objective|about\s+the\s+project|overview)\b', sec):
+        if not re.search(r'\b(?:requirement|specification)\b', sec):
+            return "CONTEXT_PURPOSE"
+
+    # 2. Evaluation / Scoring Criteria
+    if re.search(r'\b(?:evaluation|scoring|selection\s+criteria|award\s+criteria|rating\s+criteria)\b', sec):
+        return "CONTEXT_EVALUATION"
+
+    # 3. Timeline / Schedule / Key Dates / Milestones
+    if re.search(r'\b(?:timeline|schedule|key\s+dates|milestones|procurement\s+timeline|due\s+dates?)\b', sec):
+        return "CONTEXT_TIMELINE"
+
+    # 4. Instructions / Submission Guidelines / Format / Packaging
+    if re.search(r'\b(?:submission\s+instructions|vendor\s+response\s+instructions|proposal\s+instructions|format\s+of\s+proposal|submission\s+guidelines|instructions\s+to\s+bidders|response\s+format|proposal\s+submission)\b', sec):
+        return "CONTEXT_INSTRUCTIONS"
+
+    # 5. Formal Requirements / Specifications / Technical / Compliance
+    if re.search(r'\b(?:requirements?|specifications?|technical\s+specifications?|compliance\s+matrix|mandatory\s+requirements?|system\s+requirements?|functional\s+requirements?|security\s+requirements?|commercial\s+terms|legal\s+terms|contractual\s+terms)\b', sec):
+        return "FORMAL_REQUIREMENTS"
+
+    # 6. Scope of Work / Deliverables / Obligations
+    if re.search(r'\b(?:scope\s+of\s+work|scope|services\s+required|vendor\s+obligations|technical\s+approach|statement\s+of\s+work|sow|deliverables?)\b', sec):
+        return "SCOPE_OF_WORK"
+
+    return "GENERAL"
+
+
 def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     """
     Returns True if the text represents a section header, subsection title,
@@ -377,8 +418,8 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         re.IGNORECASE
     ))
 
-    # 1. Section / Chapter Title Headers (e.g., "SECTION 2: TECHNICAL & INFRASTRUCTURE REQUIREMENTS", "Section A: Platform Functional Expectations")
-    if re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART)\s+[A-Za-z0-9]+[\s:\-–—]', clean_text, re.IGNORECASE) and not has_obligation_modal:
+    # 1. Section / Chapter Title Headers (e.g., "SECTION 2: TECHNICAL & INFRASTRUCTURE REQUIREMENTS", "Section A: Platform Functional Expectations", "1. Purpose", "2. Scope of Work", "3. Requirements")
+    if re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|\d+\.)\s+[A-Za-z0-9\s&,\.\-–—:]+$', clean_text, re.IGNORECASE) and not has_obligation_modal:
         return True
 
     # 2. Subsection Title Headings (e.g., "1. Technical Specifications", "5.1 Commercial Terms")
@@ -400,6 +441,13 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     ) and not has_obligation_modal:
         return True
 
+    # 5. Table Column Headers (e.g., "Req ID Category Requirement Specification Mandatory", "ID Description Priority Mandatory")
+    if (
+        re.search(r'\b(?:Req\s*ID|Requirement\s*ID|Item\s*#|Clause\s*#)\b', clean_text, re.IGNORECASE)
+        and re.search(r'\b(?:Category|Specification|Description|Mandatory|Priority|Status)\b', clean_text, re.IGNORECASE)
+    ) and not has_obligation_modal:
+        return True
+
     return False
 
 
@@ -418,15 +466,16 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> List[RawClause]
 
     # Numbered clause headers e.g. "2.1 High Availability:", "REQ-01:", "3.2.1"
     numbered_clause_pattern = re.compile(
-        r'^\s*(?:(?:\d+\.){1,3}\d*|(?:REQ|RFP|SPEC|DELIV|SEC|TECH|FUNC|LEGAL|SLA)[-_:\s])',
+        r'^\s*(?:(?:\d+\.){1,3}\d*\s+(?=[A-Z])|(?:\d+\))\s+|[A-Z]\.\s+(?=[A-Z])|(?:REQ|RFP|SPEC|DELIV|SEC|TECH|FUNC|LEGAL|SLA)[-_:\s])',
         re.IGNORECASE
     )
 
-    # Requirement-specific section indicators
-    req_section_keywords = [
-        "requirement", "specification", "technical", "security", "functional", 
-        "legal", "terms", "deliverable", "scope of work", "compliance", "sla", "infrastructure"
-    ]
+    # Check if document contains a dedicated FORMAL_REQUIREMENTS tier section or explicit requirement IDs
+    has_formal_requirements_tier = any(
+        _classify_section_tier(b.section_title) == "FORMAL_REQUIREMENTS"
+        or bool(re.search(r'\bREQ-[A-Z0-9]+-\d{3,4}\b', b.text, re.IGNORECASE))
+        for b in blocks
+    )
 
     for b in blocks:
         text = b.text.strip()
@@ -445,7 +494,19 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> List[RawClause]
         ):
             continue
 
-        is_req_section = any(k in b.section_title.lower() for k in req_section_keywords)
+        tier = _classify_section_tier(b.section_title)
+        has_explicit_id_in_block = bool(re.search(r'\bREQ-[A-Z0-9]+-\d{3,4}\b', text, re.IGNORECASE))
+
+        # Context-aware section filtering:
+        # 1. Purely contextual sections (Purpose, Evaluation, Timeline, Submission Instructions) are skipped
+        if tier in ["CONTEXT_PURPOSE", "CONTEXT_EVALUATION", "CONTEXT_TIMELINE", "CONTEXT_INSTRUCTIONS"] and not has_explicit_id_in_block:
+            continue
+
+        # 2. When a dedicated formal Requirements table/section exists, high-level Scope of Work summary overview blocks are skipped
+        if has_formal_requirements_tier and tier == "SCOPE_OF_WORK" and not has_explicit_id_in_block:
+            continue
+
+        is_req_section = (tier == "FORMAL_REQUIREMENTS") or (not has_formal_requirements_tier and tier in ["SCOPE_OF_WORK", "GENERAL"])
 
         # Split block into individual numbered items or bullet points if present
         lines = [l.strip() for l in text.split("\n") if l.strip()]
@@ -490,13 +551,15 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> List[RawClause]
                     continue
 
                 # Qualifying condition:
-                # 1. Contains RFC 2119 imperatives / obligation modals
-                # 2. OR is explicitly numbered (e.g. 2.1 ...)
-                # 3. OR is in a requirement section and contains substantive specifications
+                # 1. Contains explicit requirement ID
+                # 2. Contains RFC 2119 imperatives / obligation modals
+                # 3. OR is explicitly numbered (e.g. 2.1 ...)
+                # 4. OR is in a formal requirement section and contains substantive specifications
+                has_explicit_id = bool(re.search(r'\bREQ-[A-Z0-9]+-\d{3,4}\b', sub_c, re.IGNORECASE))
                 has_imperatives = bool(imperative_pattern.search(sub_c))
                 has_numbering = bool(numbered_clause_pattern.match(sub_c))
 
-                if has_imperatives or has_numbering or (is_req_section and len(sub_c.split()) >= 6):
+                if has_explicit_id or has_imperatives or has_numbering or (is_req_section and len(sub_c.split()) >= 6):
                     clauses.append(
                         RawClause(
                             clause_id="",  # Will be assigned canonical sequential ID during deduplication

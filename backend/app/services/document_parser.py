@@ -71,16 +71,24 @@ class DocumentParserService:
                     continue
 
                 # Heading detection heuristic:
-                # Short line (< 90 chars), doesn't end with a period, often capitalized or numbered
+                # Genuine section headings start with section/number prefix or clean uppercase title
                 lines = text.split("\n")
                 first_line = lines[0].strip()
                 is_heading = False
 
-                if len(first_line) < 90 and (
-                    first_line.isupper()
-                    or any(first_line.startswith(prefix) for prefix in ["Section", "Part", "Chapter", "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9."])
-                    or not first_line.endswith((".", ":", ";"))
-                ) and len(lines) <= 2:
+                import re
+                is_section_header = bool(
+                    re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|\d+\.)\s+[A-Za-z0-9\s&,\.\-–—:]+$', first_line, re.IGNORECASE)
+                    or (
+                        first_line.isupper() 
+                        and 5 <= len(first_line) <= 60 
+                        and len(first_line.split()) >= 2 
+                        and not first_line.startswith("REQ-") 
+                        and first_line not in ["YES", "NO", "N/A", "TRUE", "FALSE", "MANDATORY", "OPTIONAL"]
+                    )
+                )
+
+                if is_section_header and len(lines) <= 2:
                     current_section = first_line
                     is_heading = True
 
