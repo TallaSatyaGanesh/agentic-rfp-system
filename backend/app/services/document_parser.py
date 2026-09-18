@@ -78,7 +78,7 @@ class DocumentParserService:
 
                 import re
                 is_section_header = bool(
-                    re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|\d+\.)\s+[A-Za-z0-9\s&,\.\-–—:]+$', first_line, re.IGNORECASE)
+                    re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|ANNEXURE|SCHEDULE|ATTACHMENT|EXHIBIT|\d+\.)\s+[A-Za-z0-9\s&,\.\-–—:/()]+$', first_line, re.IGNORECASE)
                     or (
                         first_line.isupper() 
                         and 5 <= len(first_line) <= 60 

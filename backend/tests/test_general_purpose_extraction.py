@@ -261,3 +261,135 @@ def test_dynamic_extraction_without_fixed_count_assumption():
         assert len(clauses) == 3
         for c in clauses:
             assert any(m in c["text"].lower() for m in ["must", "shall"])
+
+
+def test_gov_defense_pws_style_rfp():
+    """Verify Gov/Defense style Performance Work Statement (PWS) without tables extracts genuine requirements."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_path = os.path.join(tmpdir, "defense_pws_rfp.pdf")
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = []
+
+        story.append(Paragraph("PERFORMANCE WORK STATEMENT (PWS)", styles['Heading1']))
+        story.append(Paragraph("Tactical Data Network Modernization", styles['Heading2']))
+        story.append(Spacer(1, 10))
+
+        story.append(Paragraph("1.0 Scope of Work", styles['Heading2']))
+        story.append(Paragraph("The Contractor shall provide engineering and cybersecurity services for tactical data nodes.", styles['Normal']))
+        story.append(Paragraph("The Contractor must assign a dedicated Key Personnel Lead holding an active Top Secret clearance.", styles['Normal']))
+        story.append(Spacer(1, 8))
+
+        story.append(Paragraph("2.0 Technical Specifications", styles['Heading2']))
+        story.append(Paragraph("The system shall implement FIPS 140-3 validated cryptographic modules.", styles['Normal']))
+        story.append(Paragraph("The network architecture must support zero-loss failover within 50 milliseconds.", styles['Normal']))
+        story.append(Spacer(1, 8))
+
+        story.append(Paragraph("3.0 Deliverables & Reporting", styles['Heading2']))
+        story.append(Paragraph("The Contractor shall submit monthly status reports (MSR) no later than the 5th business day of each month.", styles['Normal']))
+        story.append(Paragraph("The vendor is required to deliver finalized architecture design documents within 60 days of award.", styles['Normal']))
+
+        doc.build(story)
+
+        state: RFPProposalState = {
+            "rfp_id": "test_defense_pws",
+            "file_path": pdf_path,
+            "metadata": None,
+            "raw_clauses": [],
+            "requirements": [],
+            "compliance_matrix": [],
+            "overall_compliance_score": 0.0,
+            "risks": [],
+            "clarification_questions": [],
+            "go_nogo_decision": None,
+            "go_nogo_notes": None,
+            "proposal_drafts": [],
+            "current_version": 0,
+            "review_reports": [],
+            "revision_count": 0,
+            "max_revisions": 2,
+            "final_approval_decision": None,
+            "human_feedback": None,
+            "active_agent": "Extraction Agent",
+            "workflow_status": "EXTRACTING",
+            "logs": [],
+            "error": None
+        }
+
+        extract_result = extract_rfp_node(state)
+        raw_clauses = extract_result["raw_clauses"]
+
+        assert len(raw_clauses) == 6, f"Expected 6 raw clauses from PWS, got {len(raw_clauses)}"
+
+        state["raw_clauses"] = raw_clauses
+        classify_result = classify_requirements_node(state)
+        classified_reqs = classify_result["requirements"]
+
+        assert len(classified_reqs) == 6
+        for r in classified_reqs:
+            assert r["req_code"].startswith("REQ-")
+            assert len(r["text"]) > 15
+
+
+def test_annexure_schedule_based_rfp():
+    """Verify RFP structured into Annexures and Schedules extracts requirements accurately."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_path = os.path.join(tmpdir, "annexure_rfp.pdf")
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = []
+
+        story.append(Paragraph("GLOBAL TENDER NOTICE", styles['Heading1']))
+        story.append(Paragraph("Notice Inviting Tender (NIT) No: GT-2026-88", styles['Heading2']))
+        story.append(Spacer(1, 10))
+
+        story.append(Paragraph("Annexure A: Functional Specifications", styles['Heading2']))
+        story.append(Paragraph("The application must provide automated report generation in PDF and Excel formats.", styles['Normal']))
+        story.append(Paragraph("The platform shall maintain 99.95% system uptime throughout the contract term.", styles['Normal']))
+        story.append(Spacer(1, 8))
+
+        story.append(Paragraph("Schedule B: Commercial and Pricing Schedule", styles['Heading2']))
+        story.append(Paragraph("Bidders shall provide a fixed-rate pricing structure valid for 24 months.", styles['Normal']))
+        story.append(Paragraph("All invoices must be submitted electronically with milestone completion certificates.", styles['Normal']))
+
+        doc.build(story)
+
+        state: RFPProposalState = {
+            "rfp_id": "test_annexure_rfp",
+            "file_path": pdf_path,
+            "metadata": None,
+            "raw_clauses": [],
+            "requirements": [],
+            "compliance_matrix": [],
+            "overall_compliance_score": 0.0,
+            "risks": [],
+            "clarification_questions": [],
+            "go_nogo_decision": None,
+            "go_nogo_notes": None,
+            "proposal_drafts": [],
+            "current_version": 0,
+            "review_reports": [],
+            "revision_count": 0,
+            "max_revisions": 2,
+            "final_approval_decision": None,
+            "human_feedback": None,
+            "active_agent": "Extraction Agent",
+            "workflow_status": "EXTRACTING",
+            "logs": [],
+            "error": None
+        }
+
+        extract_result = extract_rfp_node(state)
+        raw_clauses = extract_result["raw_clauses"]
+
+        assert len(raw_clauses) == 4, f"Expected 4 raw clauses from Annexure RFP, got {len(raw_clauses)}"
+
+        state["raw_clauses"] = raw_clauses
+        classify_result = classify_requirements_node(state)
+        classified_reqs = classify_result["requirements"]
+
+        assert len(classified_reqs) == 4
+        categories = {r["category"] for r in classified_reqs}
+        assert "Technical" in categories
+        assert "Commercial" in categories
+
