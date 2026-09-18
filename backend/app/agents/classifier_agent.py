@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.agents.state import RFPProposalState
 from app.agents.llm_factory import LLMFactory
+from app.agents.extractor_agent import _is_non_requirement_heading_or_criterion
 from app.core.prompts import CLASSIFICATION_AGENT_PROMPT
 from app.models.schemas import ClassificationAgentOutput, ClassifiedRequirement
 
@@ -160,6 +161,8 @@ def _fallback_classify_batch(clauses: List[Dict[str, Any]]) -> List[ClassifiedRe
     for c in clauses:
         clause_id = c.get("clause_id", "")
         text = c.get("text", "")
+        if _is_non_requirement_heading_or_criterion(text):
+            continue
         page = c.get("source_page", 1)
         section = c.get("source_section", "General")
 
@@ -384,7 +387,10 @@ def _deduplicate_raw_clauses(raw_clauses: List[Dict[str, Any]]) -> List[Dict[str
     deduped: List[Dict[str, Any]] = []
 
     for c in raw_clauses:
-        text_clean = re.sub(r'\s+', ' ', c.get("text", "").strip().lower())
+        text_raw = c.get("text", "")
+        if _is_non_requirement_heading_or_criterion(text_raw):
+            continue
+        text_clean = re.sub(r'\s+', ' ', text_raw.strip().lower())
         page = c.get("source_page", 1)
         section = c.get("source_section", "General").strip().lower()
 

@@ -316,6 +316,8 @@ def _extract_all_clauses(blocks: List[ExtractedBlock]) -> List[RawClause]:
                 ])
                 if batch_result and batch_result.clauses:
                     for c in batch_result.clauses:
+                        if _is_non_requirement_heading_or_criterion(c.text):
+                            continue
                         norm_sig = _normalize_clause_sig(c.text)
                         if norm_sig and norm_sig not in seen_signatures:
                             # Validate source_page and source_section
@@ -350,6 +352,55 @@ def _extract_all_clauses(blocks: List[ExtractedBlock]) -> List[RawClause]:
         )
 
     return formatted_clauses
+
+
+def _is_non_requirement_heading_or_criterion(text: str) -> bool:
+    """
+    Returns True if the text represents a section header, subsection title,
+    evaluation/scoring criterion, or introductory preamble line that MUST NOT
+    be extracted as a requirement clause or assigned a REQ-* ID.
+    
+    Top-priority override: Explicit IDs (e.g. REQ-TECH-001:) are always preserved.
+    """
+    clean_text = text.strip()
+    if not clean_text:
+        return True
+
+    # Top-priority override: explicit requirement IDs present in text
+    if re.search(r'\bREQ-[A-Z0-9]+-\d{3,4}\b', clean_text, re.IGNORECASE):
+        return False
+
+    # Check for binding obligation modals
+    has_obligation_modal = bool(re.search(
+        r'\b(?:shall|must|is\s+required\s+to|are\s+required\s+to|must\s+provide|shall\s+agree|must\s+hold|must\s+support|shall\s+reside)\b',
+        clean_text,
+        re.IGNORECASE
+    ))
+
+    # 1. Section / Chapter Title Headers (e.g., "SECTION 2: TECHNICAL & INFRASTRUCTURE REQUIREMENTS", "CHAPTER 5: LEGAL & COMMERCIAL")
+    if re.match(r'^(?:SECTION|CHAPTER)\s+\d+[\s:\-–—]', clean_text, re.IGNORECASE) and not has_obligation_modal:
+        return True
+
+    # 2. Subsection Title Headings (e.g., "1. Technical Specifications", "5.1 Commercial Terms")
+    if re.match(r'^\d+(?:\.\d+)*\.?\s+[A-Z][A-Za-z0-9\s&,\.\-–—]+$', clean_text) and not has_obligation_modal:
+        return True
+
+    # 3. Evaluation / Scoring Preamble & Weightings (e.g., "Proposals will be evaluated based on:", "Security & Compliance Verification (25%)", "Technical Architecture (30%)")
+    if (
+        re.search(r'\b(?:evaluated\s+based\s+on|evaluation(?:\s+&\s+scoring)?\s+criteria|scoring\s+(?:matrix|criteria)|weighting|award\s+criteria)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\(\s*\d+%\s*\)', clean_text)
+        or re.search(r'\b\d+\s*(?:%|percent|points)\b', clean_text, re.IGNORECASE)
+    ) and not has_obligation_modal:
+        return True
+
+    # 4. Document Titles & Subtitles (e.g., "System Specification & Commercial Requirements Document", "REQUEST FOR PROPOSAL (RFP)")
+    if (
+        re.search(r'\b(?:REQUEST\s+FOR\s+PROPOSAL|SOLICITATION\s+DOCUMENT|TENDER\s+DOCUMENT)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:System\s+Specification|Requirements\s+Document|Commercial\s+Requirements\s+Document|Specification\s+Document)\b', clean_text, re.IGNORECASE)
+    ) and not has_obligation_modal:
+        return True
+
+    return False
 
 
 def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> List[RawClause]:
@@ -421,6 +472,9 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> List[RawClause]
         for chunk in item_chunks:
             chunk_clean = chunk.strip().strip('-*• \t')
             if len(chunk_clean.split()) < 4 or len(chunk_clean) < 20:
+                continue
+
+            if _is_non_requirement_heading_or_criterion(chunk_clean):
                 continue
 
             # Qualifying condition:

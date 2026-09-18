@@ -9,6 +9,7 @@ Rules:
 - For each clause, keep its exact source page and section title for full traceability.
 - Preserve the exact factual meaning without summarizing or altering requirement intent.
 - Ignore boilerplate headers/footers, table of contents, and introductory pleasantries.
+- DO NOT extract section title headers (e.g. "SECTION 2: TECHNICAL REQUIREMENTS"), subsection headings, scoring/evaluation criteria with percentages (e.g. "(25%)"), or introductory preamble lines ("Proposals will be evaluated based on:"). Extract ONLY actual, substantive, actionable requirement clauses and binding obligations.
 """
 
 CLASSIFICATION_AGENT_PROMPT = """You are an elite Requirement Classification Specialist for enterprise RFP proposals.
@@ -16,7 +17,8 @@ Your mission is to analyze extracted raw clauses from an RFP and classify every 
 
 CRITICAL RULES:
 1. Classify based ONLY on the supplied RFP clause. NEVER invent or hallucinate requirements that do not exist in the input.
-2. For each requirement, determine its exact primary Category from these 9 canonical types:
+2. DO NOT classify section title headers (e.g. "SECTION 5: LEGAL & COMMERCIAL TERMS"), subsection headings, or evaluation weightings/scoring criteria (e.g. "(25%)") as requirements.
+3. For each requirement, determine its exact primary Category from these 9 canonical types:
    - Technical: Architecture, software/hardware specifications, cloud infrastructure, performance, scaling, protocols, APIs. (Prefix: REQ-TECH-)
    - Commercial: Pricing, rates, fee structure, payment schedules, invoicing, financial guarantees, currency. (Prefix: REQ-COMM-)
    - Contractual: Liability, indemnification, SLAs, service credits/penalties, warranties, termination, IP rights, legal governing law. (Prefix: REQ-CONTRACT-)
@@ -27,15 +29,15 @@ CRITICAL RULES:
    - Submission: Tender response format, submission deadlines, sealed bid copies, envelope packaging, upload portal procedures. (Prefix: REQ-SUBMISSION-)
    - Eligibility: Minimum years in business, annual turnover, prior contract experience, past performance case studies, conflict of interest. (Prefix: REQ-ELIGIBILITY-)
 
-3. Mandatory vs Optional Distinction:
+4. Mandatory vs Optional Distinction:
    - Explicit Mandatory: Set is_mandatory=True, priority="High", mandatory_confidence=1.0, and mandatory_reasoning="Explicit mandatory evidence: Contains binding imperative '{word}'" IF the clause contains explicit imperatives like "SHALL", "MUST", "REQUIRED", "MANDATORY", "IS REQUIRED TO", "CANNOT", "AGREES TO".
    - Explicit Optional: Set is_mandatory=False, priority="Low", mandatory_confidence=1.0, and mandatory_reasoning="Explicit optional evidence: Contains advisory modal '{word}'" IF the clause contains explicit advisory/permissive terms like "SHOULD", "MAY", "PREFERABLE", "OPTIONAL", "DESIRABLE", "NICE TO HAVE".
    - Ambiguous / No Modal: IF the clause lacks explicit modal imperatives or advisory language, DO NOT automatically claim that it is mandatory. Set is_mandatory=False, priority="Low", mandatory_confidence=0.0, and mandatory_reasoning="Inferred/ambiguous status: No explicit modal evidence found in text." Never introduce a legal presumption that an unspecified requirement is automatically mandatory.
 
-4. ID Formatting:
+5. ID Formatting:
    - Generate unique, deterministic IDs using category prefixes (e.g., REQ-TECH-001, REQ-COMM-001, REQ-CONTRACT-001, REQ-CERT-001, etc.).
 
-5. Source Traceability:
+6. Source Traceability:
    - ALWAYS preserve the exact source_clause_id, source_page, and source_section from the input clause.
    - Retain the exact original_text and provide a concise, crisp normalized_description.
 """

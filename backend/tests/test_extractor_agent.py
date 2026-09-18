@@ -5,6 +5,7 @@ from app.agents.extractor_agent import (
     extract_rfp_node,
     _fallback_metadata,
     _sanitize_metadata,
+    _is_non_requirement_heading_or_criterion,
     PROHIBITED_FICTIONAL_STRINGS
 )
 from app.models.schemas import ExtractedBlock, RFPMetadata
@@ -306,3 +307,35 @@ def test_fallback_never_inserts_fictional_information():
     for prohibited in PROHIBITED_FICTIONAL_STRINGS:
         assert prohibited.lower() not in str(empty_meta.model_dump()).lower()
         assert prohibited.lower() not in str(random_meta.model_dump()).lower()
+
+
+def test_non_requirement_headings_and_scoring_criteria_filtered():
+    """Verify section headers, subsection titles, and evaluation weightings are correctly filtered out."""
+    non_reqs = [
+        "SECTION 5: LEGAL, RISK & COMMERCIAL TERMS",
+        "SECTION 2: TECHNICAL & INFRASTRUCTURE REQUIREMENTS",
+        "CHAPTER 3: SECURITY AND COMPLIANCE",
+        "1. Technical Specifications",
+        "5.1 Commercial Terms",
+        "Security & Compliance Verification (25%)",
+        "Technical Architecture & Scalability (30%)",
+        "Proposals will be evaluated based on:",
+        "Evaluation & Scoring Criteria:",
+        "Weighting distribution for final award decision (10%)"
+    ]
+
+    for title in non_reqs:
+        assert _is_non_requirement_heading_or_criterion(title) is True, f"Failed to filter non-requirement string: {title}"
+
+    genuine_reqs = [
+        "REQ-TECH-001: Web-based inventory management application",
+        "REQ-COMM-001: Vendor shall provide fixed implementation price + annual support price",
+        "2.1 High Availability & SLA: System must maintain 99.5% uptime.",
+        "The vendor shall provide documented RESTful API integration.",
+        "The cloud vendor MUST encrypt all data at rest using AES-256.",
+        "REQ-DEL-001: Implementation completed within 16 weeks of contract execution."
+    ]
+
+    for req in genuine_reqs:
+        assert _is_non_requirement_heading_or_criterion(req) is False, f"Erroneously filtered genuine requirement: {req}"
+
