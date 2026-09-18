@@ -93,9 +93,9 @@ def write_proposal_node(state: RFPProposalState) -> Dict[str, Any]:
                     latest_review["actionable_revision_instructions"]
                 )
 
-            # Build concise structured prompt context
+            # Build concise structured prompt context across all requirements
             req_summary = []
-            for r_code, r_data in list(req_map.items())[:20]:
+            for r_code, r_data in req_map.items():
                 c_data = comp_map.get(r_code, {})
                 req_summary.append({
                     "requirement_id": r_code,
@@ -644,8 +644,9 @@ def _apply_writer_programmatic_safety_guard(
             validated_responses.append(safe_resp)
             seen_req_ids.add(req_id)
 
-    # Sort responses by requirement_id for deterministic order
-    validated_responses.sort(key=lambda r: r.requirement_id)
+    # Sort responses by original document sequence
+    original_order = {req_id: idx for idx, req_id in enumerate(req_map.keys())}
+    validated_responses.sort(key=lambda r: original_order.get(r.requirement_id, 999))
 
     # Reconstruct sections and full_markdown
     sections, full_markdown = _build_sections_and_markdown(

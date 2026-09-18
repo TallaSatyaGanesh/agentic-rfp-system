@@ -122,8 +122,8 @@ def _classify_all_clauses(raw_clauses: List[Dict[str, Any]]) -> List[ClassifiedR
                             req.source_page = matching_clause.get("source_page", req.source_page)
                             req.source_section = matching_clause.get("source_section", req.source_section)
 
-                        # Enforce mandatory/optional validation against actual modal evidence
-                        is_m, prio, m_conf, m_reas = _determine_mandatory(req.text)
+                        # Enforce mandatory/optional validation against actual modal evidence from text or original_text
+                        is_m, prio, m_conf, m_reas = _determine_mandatory(req.text, req.original_text)
                         if m_conf == 0.0:
                             # Ambiguous clause: never allow false high-confidence mandatory claims
                             req.is_mandatory = False
@@ -164,7 +164,7 @@ def _fallback_classify_batch(clauses: List[Dict[str, Any]]) -> List[ClassifiedRe
         section = c.get("source_section", "General")
 
         category, reason = _determine_category(text, section)
-        is_mandatory, priority, mand_conf, mand_reason = _determine_mandatory(text)
+        is_mandatory, priority, mand_conf, mand_reason = _determine_mandatory(text, text)
 
         # Build crisp normalized statement
         clean_text = re.sub(r'\s+', ' ', text).strip()
@@ -240,20 +240,12 @@ def _determine_category(text: str, section: str) -> tuple[str, str]:
     return "Technical", "Clause specifies architectural, technical infrastructure, software functionality, or performance criteria"
 
 
-def _determine_mandatory(text: str) -> tuple[bool, str, float, str]:
+def _determine_mandatory(text: str, original_text: Optional[str] = None) -> tuple[bool, str, float, str]:
     """
-    Evaluates mandatory vs optional status based on explicit modal evidence.
+    Evaluates mandatory vs optional status based on explicit modal evidence from text and original_text.
     Returns (is_mandatory, priority, mandatory_confidence, mandatory_reasoning).
-
-    1. Explicit Mandatory: MUST, SHALL, MANDATORY, REQUIRED, IS REQUIRED TO, CANNOT, AGREES TO
-       -> is_mandatory = True, priority = "High", mandatory_confidence = 1.0
-    2. Explicit Optional: SHOULD, MAY, OPTIONAL, PREFERABLE, DESIRABLE, NICE TO HAVE
-       -> is_mandatory = False, priority = "Low", mandatory_confidence = 1.0
-    3. Ambiguous / No Modal:
-       -> is_mandatory = False, priority = "Low", mandatory_confidence = 0.0
-       (Does not automatically claim mandatory status; zero legal presumption)
     """
-    text_lower = text.lower()
+    combined_text = f"{text} {original_text or ''}".lower()
 
     mandatory_pattern = re.compile(
         r'\b(?:shall|must|mandatory|required|will\s+be\s+required|is\s+required\s+to|are\s+required\s+to|agrees\s+to|covenants|undertakes|cannot|strict\s+requirement)\b',
@@ -264,8 +256,8 @@ def _determine_mandatory(text: str) -> tuple[bool, str, float, str]:
         re.IGNORECASE
     )
 
-    mandatory_match = mandatory_pattern.search(text_lower)
-    optional_match = optional_pattern.search(text_lower)
+    mandatory_match = mandatory_pattern.search(combined_text)
+    optional_match = optional_pattern.search(combined_text)
 
     if mandatory_match and not optional_match:
         word = mandatory_match.group(0).upper()
@@ -302,21 +294,58 @@ def _normalize_category(category_name: str, text: str) -> str:
 
 def _assign_canonical_ids(requirements: List[ClassifiedRequirement]) -> List[ClassifiedRequirement]:
     """
-    Assigns deterministic, unique, sequential IDs to requirements
-    using their category prefix (e.g. REQ-TECH-001, REQ-COMM-001, etc.).
+    Assigns deterministic, unique, sequential IDs to requirements.
+    Uses a 2-pass approach:
+    1. Pass 1: Preserve explicit requirement IDs present in candidate text (e.g. REQ-TECH-001, REQ-COMM-001).
+    2. Pass 2: For unnumbered requirements, generate category-prefixed sequential IDs (REQ-{PREFIX}-{idx:03d})
+       without displacing explicit IDs.
     """
-    cat_counters: Dict[str, int] = {cat: 1 for cat in CATEGORY_PREFIX_MAP}
-    final_list: List[ClassifiedRequirement] = []
+    EXPLICIT_ID_REGEX = re.compile(r'\b(REQ-[A-Z0-9]+-\d{3,4})\b', re.IGNORECASE)
+    seen_codes: Set[str] = set()
+    used_indices_per_cat: Dict[str, Set[int]] = {cat: set() for cat in CATEGORY_PREFIX_MAP}
+    
+    assigned_explicit: Set[int] = set()
 
-    for req in requirements:
+    # PASS 1: Assign explicit IDs
+    for idx, req in enumerate(requirements):
+        explicit_match = None
+        for candidate in [req.req_code, req.original_text, req.text, req.source_clause_id]:
+            if candidate:
+                m = EXPLICIT_ID_REGEX.search(str(candidate))
+                if m:
+                    candidate_code = m.group(1).upper()
+                    if candidate_code not in seen_codes:
+                        explicit_match = candidate_code
+                        break
+        if explicit_match:
+            req.req_code = explicit_match
+            seen_codes.add(explicit_match)
+            assigned_explicit.add(idx)
+            num_match = re.search(r'-(\d{3,4})$', explicit_match)
+            if num_match:
+                cat = req.category if req.category in CATEGORY_PREFIX_MAP else "Technical"
+                used_indices_per_cat[cat].add(int(num_match.group(1)))
+
+    # PASS 2: Assign synthetic IDs to unnumbered requirements
+    cat_counters: Dict[str, int] = {cat: 1 for cat in CATEGORY_PREFIX_MAP}
+    for idx, req in enumerate(requirements):
+        if idx in assigned_explicit:
+            continue
         cat = req.category if req.category in CATEGORY_PREFIX_MAP else "Technical"
         prefix = CATEGORY_PREFIX_MAP[cat]
-        idx = cat_counters[cat]
-        req.req_code = f"REQ-{prefix}-{idx:03d}"
-        cat_counters[cat] += 1
-        final_list.append(req)
+        num_idx = cat_counters[cat]
+        
+        code = f"REQ-{prefix}-{num_idx:03d}"
+        while code in seen_codes or num_idx in used_indices_per_cat[cat]:
+            num_idx += 1
+            code = f"REQ-{prefix}-{num_idx:03d}"
+            
+        cat_counters[cat] = num_idx + 1
+        used_indices_per_cat[cat].add(num_idx)
+        req.req_code = code
+        seen_codes.add(code)
 
-    return final_list
+    return requirements
 
 
 def _deduplicate_raw_clauses(raw_clauses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
