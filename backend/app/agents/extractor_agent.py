@@ -359,22 +359,22 @@ def _classify_section_tier(section_title: str) -> str:
     Classifies a section title into structural hierarchy tiers across commercial,
     government, defense, and international procurement standards:
     - CONTEXT_PURPOSE: Purpose, Introduction, Executive Summary, Background, Objective, Overview, Preamble, NIT, EOI
-    - CONTEXT_EVALUATION: Evaluation Criteria, Selection Criteria, Scoring Matrix, Award Criteria, Methodology
-    - CONTEXT_TIMELINE: Timeline, Schedule, Key Dates, Milestones, Procurement Calendar
-    - CONTEXT_INSTRUCTIONS: Vendor Instructions, Submission Guidelines, Proposal Format, ITB, ITT
-    - FORMAL_REQUIREMENTS: Requirements, System Requirements, Specifications, Functional/Non-Functional Specs, Compliance Matrix, Terms & Conditions (GTC/STC), SLA
+    - CONTEXT_EVALUATION: Evaluation Criteria, Selection Criteria, Scoring Matrix, Award Criteria, Methodology, Marks Allocation
+    - CONTEXT_TIMELINE: Timeline, Schedule of Events, Key Dates, Milestones, Procurement Calendar
+    - CONTEXT_INSTRUCTIONS: Vendor Instructions, Submission Guidelines, Proposal Format, ITB, ITT, Portal Walkthroughs, EMD/BG
+    - FORMAL_REQUIREMENTS: Requirements, System Requirements, Specifications, Functional/Non-Functional Specs, Compliance Matrix, Terms & Conditions (GTC/STC), SLA, Server Details
     - SCOPE_OF_WORK: Scope of Work (SOW), Performance Work Statement (PWS), Statement of Objectives (SOO), Terms of Reference (TOR), Deliverables
     - GENERAL: Default/unspecified
     """
     sec = section_title.strip().lower()
 
-    # 1. Purpose / Introduction / Executive Summary / Overview / Background / Preamble
-    if re.search(r'\b(?:purpose|introduction|executive\s+summary|background|objective|procurement\s+objective|about\s+(?:the\s+)?(?:project|rfp|solicitation|company)|overview|intent|preamble|invitation\s+to\s+tender|notice\s+inviting\s+tender|nit|expression\s+of\s+interest|eoi)\b', sec):
+    # 1. Purpose / Introduction / Executive Summary / Overview / Background / Preamble / Invitation
+    if re.search(r'\b(?:purpose|introduction|executive\s+summary|background|objective|procurement\s+objective|about\s+(?:the\s+)?(?:project|rfp|solicitation|company)|overview|intent|preamble|invitation\s+to\s+tender|notice\s+inviting\s+tender|nit|expression\s+of\s+interest|eoi|invitation\s+to\s+bid)\b', sec):
         if not re.search(r'\b(?:requirements?|specifications?|deliverables?|scope\s+of\s+work|statement\s+of\s+work)\b', sec):
             return "CONTEXT_PURPOSE"
 
-    # 2. Evaluation / Scoring Criteria / Assessment Methodology
-    if re.search(r'\b(?:evaluation|scoring|selection\s+criteria|award\s+criteria|rating\s+criteria|assessment\s+criteria|evaluation\s+methodology)\b', sec):
+    # 2. Evaluation / Scoring Criteria / Assessment Methodology / Marks / QCBS
+    if re.search(r'\b(?:evaluation|scoring|selection\s+criteria|award\s+criteria|rating\s+criteria|assessment\s+criteria|evaluation\s+methodology|marks\b|marking\s+scheme|weightage|qcbs|more\s+than\s+\d+.*marks)\b', sec):
         return "CONTEXT_EVALUATION"
 
     # 3. Timeline / Schedule of Events / Key Dates / Milestones / Procurement Calendar
@@ -382,12 +382,12 @@ def _classify_section_tier(section_title: str) -> str:
         if not re.search(r'\b(?:commercial|pricing|rates|fees|requirements?|specifications?|deliverables?)\b', sec):
             return "CONTEXT_TIMELINE"
 
-    # 4. Instructions / Submission Guidelines / Format / Packaging / Vendor Response
-    if re.search(r'\b(?:submission\s+instructions|vendor\s+response|vendor\s+instructions|proposal\s+instructions|format\s+of\s+proposal|submission\s+guidelines|instructions\s+to\s+bidders|instructions\s+to\s+proposers|instructions\s+to\s+tenderers|itb|itt|response\s+format|proposal\s+submission|proposal\s+packaging|proposal\s+preparation|general\s+instructions)\b', sec):
+    # 4. Instructions / Submission Guidelines / Format / Packaging / Vendor Response / Registration Walkthrough / EMD / BG / Proforma
+    if re.search(r'\b(?:submission\s+instructions|vendor\s+response|vendor\s+instructions|proposal\s+instructions|format\s+of\s+proposal|submission\s+guidelines|instructions\s+to\s+bidders|instructions\s+to\s+proposers|instructions\s+to\s+tenderers|itb|itt|response\s+format|proposal\s+submission|proposal\s+packaging|proposal\s+preparation|general\s+instructions|registration\s+process|applicant\s+registration|user\s+registration|portal\s+registration|registration\s+procedure|online\s+payment\s+of\s+emd|payment\s+of\s+emd|bank\s+guarant[ee]{2}|bank\s+gurantee|earnest\s+money|emd\b|bid\s+security|exemption\s+certificate|declaration\s+in\s+lieu|proforma|annexure\s+ii|annexure\s+iii)\b', sec):
         return "CONTEXT_INSTRUCTIONS"
 
-    # 5. Formal Requirements / Specifications / Technical / Compliance / Terms
-    if re.search(r'\b(?:requirements?|specifications?|technical\s+specifications?|compliance\s+matrix|mandatory\s+requirements?|system\s+requirements?|functional\s+requirements?|non-functional\s+requirements?|security\s+requirements?|technical\s+architecture|statement\s+of\s+requirements|schedule\s+of\s+requirements|technical\s+schedule|commercial\s+terms|legal\s+terms|contractual\s+terms|general\s+terms|special\s+terms|gtc|stc|service\s+level|sla)\b', sec):
+    # 5. Formal Requirements / Specifications / Technical / Compliance / Terms / Hardware Details
+    if re.search(r'\b(?:requirements?|specifications?|technical\s+specifications?|compliance\s+matrix|mandatory\s+requirements?|system\s+requirements?|functional\s+requirements?|non-functional\s+requirements?|security\s+requirements?|technical\s+architecture|statement\s+of\s+requirements|schedule\s+of\s+requirements|technical\s+schedule|commercial\s+terms|legal\s+terms|contractual\s+terms|general\s+terms|special\s+terms|gtc|stc|service\s+level|sla|server\s+details|hardware\s+details)\b', sec):
         return "FORMAL_REQUIREMENTS"
 
     # 6. Scope of Work / Deliverables / Obligations / Performance Work Statement
@@ -399,9 +399,14 @@ def _classify_section_tier(section_title: str) -> str:
 
 def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     """
-    Returns True if the text represents a section header, subsection title,
-    evaluation/scoring criterion, table column header, or proposal response instruction
-    that MUST NOT be extracted as a requirement clause or assigned a REQ-* ID.
+    Returns True if the text represents:
+    - Section / chapter / subsection headers
+    - Evaluation / scoring criteria, committee actions, marks formulas, QCBS calculations
+    - End-user screen click walkthroughs / narrative portal guides
+    - Tender fee, EMD deposit, and Bank Guarantee transaction instructions
+    - Form template placeholders, spreadsheet column numbering, and sample drafting notes
+    - Proposal response meta-instructions
+    - Table column headers or metadata key-value lines
     
     Top-priority override: Explicit IDs (e.g. REQ-TECH-001:) are always preserved.
     """
@@ -428,29 +433,81 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     if re.match(r'^(?:[A-Z]\.|\d+(?:\.\d+)*\.?)\s+[A-Z][A-Za-z0-9\s&,\.\-–—:/()]+$', clean_text) and not has_obligation_modal:
         return True
 
-    # 3. Evaluation / Scoring Preamble & Weightings
-    if (
-        re.search(r'\b(?:evaluated\s+based\s+on|evaluation(?:\s+&\s+scoring)?\s+criteria|scoring\s+(?:matrix|criteria)|weighting|award\s+criteria)\b', clean_text, re.IGNORECASE)
-        or re.search(r'\(\s*\d+%\s*\)', clean_text)
-        or re.search(r'\b\d+\s*(?:%|percent|points\b)', clean_text, re.IGNORECASE)
-    ) and not has_obligation_modal:
+    # 3. Buyer / Evaluation Committee Actions (Buyer/Committee evaluating, scoring, shortlisting, opening bids)
+    if re.search(r'\b(?:evaluation\s+committee|tender\s+committee|selection\s+committee|scrutiny\s+committee|procurement\s+committee|bid\s+opening\s+committee|competent\s+authority|the\s+buyer|the\s+client|the\s+department|the\s+authority|the\s+pao)\s+(?:will|shall|may|reserves?\s+the\s+right\s+to|evaluates?|scores?|marks?|ranks?|shortlists?|decides?|opens?|determines?|allocates?|allots?|considers?|rejects?)\b', clean_text, re.IGNORECASE):
         return True
 
-    # 4. Document Titles & Cover Preamble (e.g., "REQUEST FOR PROPOSAL (RFP)", "System Specification & Commercial Requirements Document")
+    # Check if text describes a technical SLA or commercial rate/penalty (so it is not confused with evaluation scoring)
+    is_sla_or_commercial_rate = bool(re.search(
+        r'\b(?:uptime|availability|failover|accuracy|throughput|latency|penalty|liquidated\s+damages|discount|retention|interest|tax|gst|vat|rate|billing|subscription\s+fee|monthly\s+fee|annual\s+fee)\b',
+        clean_text,
+        re.IGNORECASE
+    ))
+
+    # 4. Evaluation / Scoring Preamble, QCBS Formulas & Marks Allocation
+    if not is_sla_or_commercial_rate:
+        if (
+            re.search(r'\b(?:evaluated\s+based\s+on|evaluation(?:\s+&\s+scoring)?\s+criteria|scoring\s+(?:matrix|criteria)|weighting|award\s+criteria)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:proposals?|bids?)\s+(?:will|shall|are\s+to)\s+be\s+(?:evaluated|scored|ranked|marked|opened|shortlisted|assessed|judged|allocated\s+marks|allotted\s+marks|weighed|weighted)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:technical|financial|quality|cost|combined)\s+(?:marks?|scores?|weights?|points?)\s+(?:shall|will|as\s+allotted)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:highest|lowest)\s+(?:technical|financial|combined)?\s*(?:marks?|scores?|points?)\s+(?:shall|will)\s+be\s+(?:given|ranked|awarded|allotted|allocated)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:ranked\s+as\s+[HhLl]-?\d+|highest\s+(?:total\s+)?combined\s+score|qcbs\s+(?:70:30|80:20|\d+:\d+)?\s*(?:methodology|formula)?|quality\s+and\s+cost\s+based\s+selection)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:weighing|weighting)\s+the\s+quality\s+and\s+cost\s+scores\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:proposals?|bidders?)\s+scoring\s+(?:above|below|more\s+than|at\s+least)?\s*\d+%', clean_text, re.IGNORECASE)
+            or re.search(r'\(\s*\d+%\s*\)', clean_text)
+            or re.search(r'\b\d+\s*marks\b', clean_text, re.IGNORECASE)
+        ):
+            return True
+
+    # 5. End-User Portal / Screen Click Journey Walkthrough
+    if (
+        re.search(
+            r'\b(?:user|applicant|citizen|society\s+representative|end-?user|customer|operator|physician|nurse|doctor)\s+(?:will|shall|can|may|must|should|is\s+required\s+to|will\s+be\s+able\s+to|can\s+be\s+able\s+to|is\s+able\s+to)?\s*(?:register|login|logins?|logs?\s+in|log\s+in|clicks?|click|fills?|fill|selects?|select|attaches?|attach|uploads?|upload|downloads?|download|views?|view|enters?|enter|revises?|revise|changes?|change|receives?|receive|submits?|submit)\b',
+            clean_text,
+            re.IGNORECASE
+        )
+        or re.search(r'\b(?:clicks?|click)\s+on\s+(?:the\s+)?(?:edit|submit|save|next|download|upload|search|button|link|icon|tab|print)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:fills?|fill)\s+(?:the\s+)?(?:responses?|fields?|form|application|basic\s+details|vital\s+signs)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:enters?|enter)\s+(?:user\s*id|username|password|otp|captcha|registered\s+email)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:changes?|change)\s+(?:his|her|their)?\s*password\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:system|portal)\s+opens?\s+(?:the\s+)?(?:registration|login|dashboard|page|screen|window|form)\b', clean_text, re.IGNORECASE)
+    ):
+        return True
+
+    # 6. Tender Deposits, EMD, and Bank Guarantee Logistics
+    if (
+        re.search(r'\b(?:online\s+payment\s+of\s+emd|payment\s+of\s+emd|earnest\s+money\s+deposit|bid\s+security\s+deposit|tender\s+fee|cost\s+of\s+tender)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:payment\s+(?:of\s+emd\s+)?by\s+(?:cheque|cash|tdr|fdr|dd|demand\s+draft|rtgs|neft)\s+(?:will|shall|is)\b)', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:bank\s+guarant[ee]{2}|bank\s+gurantee|bg)\s+(?:favoring|in\s+favou?r\s+of|shall\s+be\s+valid|should\s+be\s+valid|is\s+extendable|needs?\s+to\s+be\s+sent\s+by\s+post|of\s+equivalent\s+amount)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:bid-?security\s+declaration|exempt(?:ed|ion)?\s+(?:from\s+)?(?:emd|earnest\s+money|bg|bid\s+security)|exemption\s+certificate|without\s+emd|rejected\s+without\s+emd)\b', clean_text, re.IGNORECASE)
+    ):
+        return True
+
+    # 7. Form Templates, Spreadsheet Sequences, and Drafting Placeholders
+    if (
+        re.match(r'^\s*(?:\d+\s+){3,}\d*\s*(?:TOTAL|COST|INR|USD|Please\s+add/delete)?', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:please\s+add\s*/\s*delete\s+rows|add/delete\s+rows\s+if\s+required)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:total\s+cost\s+\([a-z0-9]\)\s+inr|total\s+cost\s+\([a-z0-9]\)\s+in\s+words|cost\s+in\s+words:\s*_{3,})\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:define\s+the\s+requirements?\s+here|define/change\s+the\s+procedure\s+as\s+per\s+your\s+state)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:proforma\s+technical\s+proposal|proforma\s+financial\s+proposal)\b', clean_text, re.IGNORECASE)
+    ):
+        return True
+
+    # 8. Document Titles & Cover Preamble (e.g., "REQUEST FOR PROPOSAL (RFP)", "System Specification & Commercial Requirements Document")
     if (
         re.search(r'\b(?:REQUEST\s+FOR\s+PROPOSAL|SOLICITATION\s+DOCUMENT|TENDER\s+DOCUMENT|INVITATION\s+TO\s+BID)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:System\s+Specification|Requirements\s+Document|Commercial\s+Requirements\s+Document|Specification\s+Document|Scope\s+of\s+Work|Vendor\s+Commitments)\b', clean_text, re.IGNORECASE)
     ) and not has_obligation_modal:
         return True
 
-    # 5. Table Column Headers
+    # 9. Table Column Headers
     if (
         re.search(r'\b(?:Req\s*ID|Requirement\s*ID|Item\s*#|Clause\s*#|Ref\s*#|S\.?No\.?)\b', clean_text, re.IGNORECASE)
         and re.search(r'\b(?:Category|Specification|Description|Mandatory|Priority|Status|Compliance|Deliverable|Feature)\b', clean_text, re.IGNORECASE)
     ) and not has_obligation_modal:
         return True
 
-    # 6. Vendor Response Instructions & Proposal Answering Meta-Guidelines
+    # 10. Vendor Response Instructions & Proposal Answering Meta-Guidelines
     if (
         re.search(r'\b(?:state\s+(?:their|its)?\s*compliance|indicate\s+(?:their|its)?\s*compliance|confirm\s+(?:their|its)?\s*compliance)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:unsupported\s+claims|cannot\s+be\s+(?:fully\s+)?confirmed|identify\s+the\s+limitation)\b', clean_text, re.IGNORECASE)
@@ -462,7 +519,7 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     ):
         return True
 
-    # 7. Metadata Key-Value Header lines without requirements
+    # 11. Metadata Key-Value Header lines without requirements
     if re.match(r'^(?:DOCUMENT\s+REF|ISSUED\s+BY|DUE\s+DATE|SUBMISSION\s+DEADLINE|CLIENT|PROJECT\s+TITLE|TITLE|AUTHORITY)[\s:\-–—]+[^\n\r]+$', clean_text, re.IGNORECASE) and not has_obligation_modal:
         return True
 

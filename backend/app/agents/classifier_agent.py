@@ -201,45 +201,70 @@ def _fallback_classify_batch(clauses: List[Dict[str, Any]]) -> List[ClassifiedRe
 def _determine_category(text: str, section: str) -> tuple[str, str]:
     """
     Determines category based on targeted keyword patterns and section context.
+    Evaluates clause text first for explicit category semantics, falling back to
+    section context when text alone is ambiguous.
     Returns (category_name, rationale).
     """
     text_lower = text.lower()
     sec_lower = section.lower()
+
+    # Define category matchers (pattern, category, rationale)
+    # Order of evaluation: Certification -> Contractual -> Commercial -> Delivery -> Documentation -> Submission -> Eligibility -> Administrative
+    category_rules = [
+        (
+            r'\b(?:iso\s*\d+|soc\s*2|soc2|hipaa|pci[- ]dss|fedramp|fips|gdpr|csa\s*star|certif(?:ication|ied|y)|accredit(?:ation|ed)|attestation|cpa\s+audit|type\s+ii|type\s+2)\b',
+            "Certification",
+            "Clause references mandatory compliance, security standard, or industry certification audit"
+        ),
+        (
+            r'\b(?:liability|unlimited\s+liability|indemnif|penalty|penalties|warranty|warranties|intellectual\s+property|ip\s+rights|governing\s+law|jurisdiction|breach|liquidated\s+damages|termination\s+for\s+convenience|terms\s+and\s+conditions)\b',
+            "Contractual",
+            "Clause governs legal liability, contractual commitments, warranties, SLA penalties, or indemnification"
+        ),
+        (
+            r'\b(?:pricing|cost|fee|fees|commercial\s+terms|payment\s+schedule|invoic(?:e|ing)|payment\s+terms|milestone\s+payment|budget|discount|hourly\s+rate|fixed\s+price|rates?\s+card|expenses|currency|financial\s+proposal|financial\s+quote|subscription\s+fee|inr|usd)\b',
+            "Commercial",
+            "Clause establishes pricing model, commercial fees, invoicing terms, or payment schedule"
+        ),
+        (
+            r'\b(?:timeline|milestone|schedule|weeks?\s+of\s+contract|concluded\s+within|completed\s+within|delivery\s+date|go[- ]live|deployment\s+schedule|implementation\s+timeline|lead\s+time|shipment|freight|handover|completion\s+date|phase\s+\d+|rollout)\b',
+            "Delivery",
+            "Clause defines implementation timeline, rollout schedule, delivery milestone, or freight handover"
+        ),
+        (
+            r'\b(?:documentation|user\s+manual|architecture\s+diagram|training\s+materials?|runbook|api\s+docs|documented\s+restful|as-built|system\s+guide|specification\s+document|audit\s+trail\s+log|operations\s+manual)\b',
+            "Documentation",
+            "Clause mandates delivery of technical architecture, user manuals, training materials, or API runbooks"
+        ),
+        (
+            r'\b(?:bid\s+submission|submit\s+proposals?|proposals?\s+due|tender\s+box|submission\s+deadline|sealed\s+envelope|portal\s+upload|hard\s+copies|electronic\s+submission|submission\s+instructions|format\s+of\s+proposal|shall\s+submit|must\s+submit|invites\s+proposals)\b',
+            "Submission",
+            "Clause specifies tender submission procedure, deadline, or delivery format"
+        ),
+        (
+            r'\b(?:eligibility|eligible|minimum\s+(?:\d+|five|ten)\s+years|prior\s+experience|past\s+performance|annual\s+turnover|track\s+record|case\s+studies|qualification\s+criteria|authorized\s+partner|licensed\s+to\s+operate|conflict\s+of\s+interest|corporate\s+standing)\b',
+            "Eligibility",
+            "Clause specifies vendor pre-qualification criteria, past performance case studies, or corporate standing"
+        ),
+        (
+            r'\b(?:administrative|authorized\s+signatory|point\s+of\s+contact|company\s+registration|duns|ein|tin|tax\s+clearance|executive\s+contact|primary\s+liaison|notice\s+address|organizational\s+chart|administrative\s+form|power\s+of\s+attorney)\b',
+            "Administrative",
+            "Clause defines administrative vendor details, points of contact, or registration paperwork"
+        ),
+    ]
+
+    # Pass 1: Match against clause text directly (highest semantic precision)
+    for pattern, cat_name, rationale in category_rules:
+        if re.search(pattern, text_lower):
+            return cat_name, rationale
+
+    # Pass 2: Match against combined section + text context
     combined = f"{sec_lower} {text_lower}"
+    for pattern, cat_name, rationale in category_rules:
+        if re.search(pattern, combined):
+            return cat_name, rationale
 
-    # 1. Certification
-    if re.search(r'\b(?:iso\s*\d+|soc\s*2|soc2|hipaa|pci[- ]dss|fedramp|fips|gdpr|csa\s*star|certif(?:ication|ied|y)|accredit(?:ation|ed)|attestation|cpa\s+audit|type\s+ii|type\s+2)\b', combined):
-        return "Certification", "Clause references mandatory compliance, security standard, or industry certification audit"
-
-    # 2. Submission
-    if re.search(r'\b(?:bid\s+submission|submit\s+proposals?|proposals?\s+due|tender\s+box|submission\s+deadline|sealed\s+envelope|portal\s+upload|hard\s+copies|electronic\s+submission|submission\s+instructions|format\s+of\s+proposal|shall\s+submit|must\s+submit|invites\s+proposals)\b', combined):
-        return "Submission", "Clause specifies tender submission procedure, deadline, or delivery format"
-
-    # 3. Commercial
-    if re.search(r'\b(?:pricing|cost|fee|fees|commercial\s+terms|payment\s+schedule|invoic(?:e|ing)|payment\s+terms|milestone\s+payment|budget|discount|hourly\s+rate|fixed\s+price|rates?\s+card|expenses|currency|financial\s+proposal|financial\s+quote)\b', combined):
-        return "Commercial", "Clause establishes pricing model, commercial fees, invoicing terms, or payment schedule"
-
-    # 4. Delivery
-    if re.search(r'\b(?:timeline|milestone|schedule|weeks?\s+of\s+contract|concluded\s+within|completed\s+within|delivery\s+date|go[- ]live|deployment\s+schedule|implementation\s+timeline|lead\s+time|shipment|freight|handover|completion\s+date|phase\s+\d+|rollout)\b', combined):
-        return "Delivery", "Clause defines implementation timeline, rollout schedule, delivery milestone, or freight handover"
-
-    # 5. Contractual
-    if re.search(r'\b(?:liability|unlimited\s+liability|indemnif|penalty|penalties|sla|service\s+level|uptime\s+guarantee|warranty|warranties|intellectual\s+property|ip\s+rights|governing\s+law|jurisdiction|breach|liquidated\s+damages|termination\s+for\s+convenience|terms\s+and\s+conditions)\b', combined):
-        return "Contractual", "Clause governs legal liability, contractual commitments, warranties, SLA penalties, or indemnification"
-
-    # 6. Documentation
-    if re.search(r'\b(?:documentation|user\s+manual|architecture\s+diagram|training\s+materials?|runbook|api\s+docs|documented\s+restful|as-built|system\s+guide|specification\s+document|audit\s+trail\s+log|operations\s+manual)\b', combined):
-        return "Documentation", "Clause mandates delivery of technical architecture, user manuals, training materials, or API runbooks"
-
-    # 7. Eligibility
-    if re.search(r'\b(?:eligibility|eligible|minimum\s+(?:\d+|five|ten)\s+years|prior\s+experience|past\s+performance|annual\s+turnover|track\s+record|case\s+studies|qualification\s+criteria|authorized\s+partner|licensed\s+to\s+operate|conflict\s+of\s+interest|corporate\s+standing)\b', combined):
-        return "Eligibility", "Clause specifies vendor pre-qualification criteria, past performance case studies, or corporate standing"
-
-    # 8. Administrative
-    if re.search(r'\b(?:administrative|authorized\s+signatory|point\s+of\s+contact|company\s+registration|duns|ein|tin|tax\s+clearance|executive\s+contact|primary\s+liaison|notice\s+address|organizational\s+chart|administrative\s+form|power\s+of\s+attorney)\b', combined):
-        return "Administrative", "Clause defines administrative vendor details, points of contact, or registration paperwork"
-
-    # 9. Technical (Default)
+    # Default: Technical
     return "Technical", "Clause specifies architectural, technical infrastructure, software functionality, or performance criteria"
 
 

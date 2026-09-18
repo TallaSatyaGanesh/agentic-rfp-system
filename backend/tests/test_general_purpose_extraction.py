@@ -5,7 +5,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
-from app.agents.extractor_agent import extract_rfp_node
+from app.agents.extractor_agent import extract_rfp_node, _is_non_requirement_heading_or_criterion
 from app.agents.classifier_agent import classify_requirements_node
 from app.agents.state import RFPProposalState
 
@@ -392,4 +392,192 @@ def test_annexure_schedule_based_rfp():
         categories = {r["category"] for r in classified_reqs}
         assert "Technical" in categories
         assert "Commercial" in categories
+
+
+def test_buyer_and_evaluation_committee_action_disambiguation():
+    """Verify that buyer actions and evaluation committee procedures are NOT extracted as vendor requirements."""
+    statements = [
+        "Duly constituted Evaluation Committee will evaluate the proposal vis-a-vis compliance with the requirements.",
+        "The Procurement Committee shall open the technical bids in the presence of bidders' representatives.",
+        "The Client reserves the right to accept or reject any proposal and to annul the bidding process at any time.",
+        "The Tender Scrutiny Committee will determine whether each bid meets the minimum eligibility criteria.",
+        "The Competent Authority may allocate marks based on technical demonstrations."
+    ]
+
+    for stmt in statements:
+        assert _is_non_requirement_heading_or_criterion(stmt) is True, f"Failed to filter buyer/committee action: {stmt}"
+
+
+def test_scoring_marks_and_qcbs_formula_disambiguation():
+    """Verify that scoring tables, QCBS formulas, and marks allocation rules are NOT extracted as vendor requirements."""
+    statements = [
+        "Proposal with the highest technical marks shall be given a score of 100.",
+        "The total score, both technical and financial, shall be obtained by weighing the quality and cost scores.",
+        "The proposal obtaining the highest total combined score in evaluation of quality and cost will be ranked as H-1.",
+        "Financial proposals will be evaluated based on the QCBS methodology with 70:30 weightage.",
+        "Technical Architecture (30 Marks)",
+        "Relevant Project Experience: More than 100 deployments - 20 Marks",
+        "Proposals will be evaluated based on technical capability (80%) and commercial competitiveness (20%)."
+    ]
+
+    for stmt in statements:
+        assert _is_non_requirement_heading_or_criterion(stmt) is True, f"Failed to filter scoring/QCBS formula: {stmt}"
+
+
+def test_end_user_ui_journey_and_walkthrough_disambiguation():
+    """Verify that end-user UI interaction narratives are NOT extracted as vendor requirements."""
+    statements = [
+        "User will enter user id and password to log in to the portal.",
+        "Applicant will register with the portal entering their basic organization details.",
+        "User fills the responses to the fields and attaches all the required documents.",
+        "If required, the user can click on edit button to revise the submission.",
+        "The user selects the district from the dropdown menu and clicks search button.",
+        "User will be able to change his password by using change password feature.",
+        "The system opens the Registration page with multiple sections."
+    ]
+
+    for stmt in statements:
+        assert _is_non_requirement_heading_or_criterion(stmt) is True, f"Failed to filter end-user UI journey: {stmt}"
+
+
+def test_tender_deposit_and_emd_mechanics_disambiguation():
+    """Verify that bidding deposit mechanics and EMD payment logistics are NOT extracted as vendor requirements."""
+    statements = [
+        "The online payment of EMD shall be made through RTGS as per the details given below.",
+        "Online payment of EMD by cheque, TDR or FDR will not be accepted.",
+        "A Bank Guarantee of equivalent amount from any Nationalized bank favoring PAO should be valid for 6 months.",
+        "MSEs in India registered with appropriate authority shall be exempted from EMD.",
+        "The bidder should submit the Bid-Security Declaration as per the format given below.",
+        "Without EMD, tender will be summarily rejected."
+    ]
+
+    for stmt in statements:
+        assert _is_non_requirement_heading_or_criterion(stmt) is True, f"Failed to filter EMD/tender deposit mechanic: {stmt}"
+
+
+def test_form_template_placeholders_and_column_sequences():
+    """Verify that form templates, column numbering sequences, and drafting notes are NOT extracted as requirements."""
+    statements = [
+        "1 2 3 4 5 6 7 8 9 TOTAL COST (A) INR Please add/delete rows if required",
+        "1 2 3 4 Please add/delete rows if required",
+        "Total Cost in Words: __________________________________________________",
+        "Each State RCS office needs to define the requirements here by suitably changing the contents given below",
+        "Proforma Technical Proposal (Annexure II)",
+        "Proforma Financial Proposal (Annexure III)"
+    ]
+
+    for stmt in statements:
+        assert _is_non_requirement_heading_or_criterion(stmt) is True, f"Failed to filter form artifact: {stmt}"
+
+
+def test_unseen_healthcare_ehr_rfp_generalization():
+    """
+    Verify complete generalization on an unseen, multi-section Healthcare EHR RFP
+    with complex mixed sections (Buyer Committee rules, User walkthroughs, and genuine clinical requirements).
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_path = os.path.join(tmpdir, "Healthcare_EHR_Solicitation.pdf")
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = []
+
+        story.append(Paragraph("HOSPITAL AUTHORITY SOLICITATION: ENTERPRISE EHR SYSTEM", styles['Heading1']))
+        story.append(Paragraph("Notice Inviting Tender Ref: HA-EHR-2026-99", styles['Heading2']))
+        story.append(Spacer(1, 10))
+
+        # Section 1: Committee / Evaluation (Must be excluded)
+        story.append(Paragraph("Section 1: Bid Evaluation & Award Process", styles['Heading2']))
+        story.append(Paragraph("The Clinical Evaluation Committee will evaluate technical proposals based on demonstrations.", styles['Normal']))
+        story.append(Paragraph("Proposals scoring above 80% technical marks will qualify for commercial bid opening.", styles['Normal']))
+        story.append(Paragraph("The final vendor selection will be ranked H-1 according to the QCBS 70:30 formula.", styles['Normal']))
+        story.append(Spacer(1, 8))
+
+        # Section 2: Clinical Workflow Narrative (Must be excluded)
+        story.append(Paragraph("Section 2: Doctor and Nurse Portal User Walkthrough", styles['Heading2']))
+        story.append(Paragraph("The physician will log in with their employee ID and select the outpatient clinic department.", styles['Normal']))
+        story.append(Paragraph("The nurse fills the vital signs form and clicks on the submit button.", styles['Normal']))
+        story.append(Paragraph("The user can click on the print prescription icon to generate a paper copy.", styles['Normal']))
+        story.append(Spacer(1, 8))
+
+        # Section 3: Genuine Clinical Specifications (Must be extracted!)
+        story.append(Paragraph("Section 3: Clinical & Technical Specifications", styles['Heading2']))
+        story.append(Paragraph("The EHR platform must support HL7 FHIR Release 4 APIs for interoperability with lab instruments.", styles['Normal']))
+        story.append(Paragraph("The system shall enforce HIPAA-compliant AES-256 encryption for all electronic protected health information (ePHI) at rest.", styles['Normal']))
+        story.append(Paragraph("The database must support automated sub-minute failover to a standby disaster recovery node.", styles['Normal']))
+        story.append(Spacer(1, 8))
+
+        # Section 4: Mandatory Security Standards (Must be extracted!)
+        story.append(Paragraph("Section 4: Mandatory Security Standards", styles['Heading2']))
+        story.append(Paragraph("The vendor must maintain active ISO 27701 and SOC 2 Type II certifications throughout the contract.", styles['Normal']))
+        story.append(Paragraph("Role-based access control with biometric or hardware token multi-factor authentication is required.", styles['Normal']))
+        story.append(Spacer(1, 8))
+
+        # Section 5: Commercial Terms & SLA (Must be extracted!)
+        story.append(Paragraph("Section 5: Commercial Terms, SLA & Legal", styles['Heading2']))
+        story.append(Paragraph("All commercial pricing shall be structured as a fixed annual subscription fee.", styles['Normal']))
+        story.append(Paragraph("The system availability shall maintain an uptime of at least 99.99% for critical emergency care modules.", styles['Normal']))
+        story.append(Paragraph("The contractor agrees to indemnify the hospital authority against any third-party data breach liabilities.", styles['Normal']))
+
+        doc.build(story)
+
+        state: RFPProposalState = {
+            "rfp_id": "test_unseen_healthcare",
+            "file_path": pdf_path,
+            "metadata": None,
+            "raw_clauses": [],
+            "requirements": [],
+            "compliance_matrix": [],
+            "overall_compliance_score": 0.0,
+            "risks": [],
+            "clarification_questions": [],
+            "go_nogo_decision": None,
+            "go_nogo_notes": None,
+            "proposal_drafts": [],
+            "current_version": 0,
+            "review_reports": [],
+            "revision_count": 0,
+            "max_revisions": 2,
+            "final_approval_decision": None,
+            "human_feedback": None,
+            "active_agent": "Extraction Agent",
+            "workflow_status": "EXTRACTING",
+            "logs": [],
+            "error": None
+        }
+
+        # 1. Extraction Phase
+        extract_result = extract_rfp_node(state)
+        raw_clauses = extract_result["raw_clauses"]
+
+        # Exactly 8 genuine requirements should be extracted (Sections 3, 4, 5)
+        # Zero committee actions (Section 1) and zero user click steps (Section 2)
+        assert len(raw_clauses) == 8, f"Expected exactly 8 genuine clinical/technical requirements, got {len(raw_clauses)}"
+
+        all_text = " ".join(c["text"] for c in raw_clauses)
+
+        # Confirm non-requirements are NOT present
+        assert "Clinical Evaluation Committee will evaluate" not in all_text
+        assert "QCBS 70:30 formula" not in all_text
+        assert "physician will log in" not in all_text
+        assert "nurse fills the vital signs form" not in all_text
+        assert "clicks on the submit button" not in all_text
+
+        # Confirm genuine requirements ARE present
+        assert "HL7 FHIR Release 4 APIs" in all_text
+        assert "HIPAA-compliant AES-256 encryption" in all_text
+        assert "ISO 27701 and SOC 2 Type II" in all_text
+        assert "99.99%" in all_text
+        assert "indemnify the hospital" in all_text
+
+        # 2. Classification Phase
+        state["raw_clauses"] = raw_clauses
+        classify_result = classify_requirements_node(state)
+        classified_reqs = classify_result["requirements"]
+
+        assert len(classified_reqs) == 8
+        categories = {r["category"] for r in classified_reqs}
+        assert "Technical" in categories
+        assert "Certification" in categories
+        assert "Commercial" in categories
+        assert "Contractual" in categories
 
