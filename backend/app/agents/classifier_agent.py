@@ -292,11 +292,29 @@ def _normalize_category(category_name: str, text: str) -> str:
     return "Technical"
 
 
+PREFIX_TO_CATEGORY_MAP: Dict[str, str] = {
+    "TECH": "Technical",
+    "COMM": "Commercial",
+    "CONTRACT": "Contractual",
+    "CON": "Contractual",
+    "ADMIN": "Administrative",
+    "CERT": "Certification",
+    "DELIVERY": "Delivery",
+    "DEL": "Delivery",
+    "DOC": "Documentation",
+    "SUBMISSION": "Submission",
+    "SUB": "Submission",
+    "ELIGIBILITY": "Eligibility",
+    "ELIG": "Eligibility"
+}
+
+
 def _assign_canonical_ids(requirements: List[ClassifiedRequirement]) -> List[ClassifiedRequirement]:
     """
     Assigns deterministic, unique, sequential IDs to requirements.
     Uses a 2-pass approach:
-    1. Pass 1: Preserve explicit requirement IDs present in candidate text (e.g. REQ-TECH-001, REQ-COMM-001).
+    1. Pass 1: Preserve explicit requirement IDs present in candidate text (e.g. REQ-TECH-001, REQ-COMM-001)
+       and reconcile canonical category matching explicit ID prefix.
     2. Pass 2: For unnumbered requirements, generate category-prefixed sequential IDs (REQ-{PREFIX}-{idx:03d})
        without displacing explicit IDs.
     """
@@ -306,7 +324,7 @@ def _assign_canonical_ids(requirements: List[ClassifiedRequirement]) -> List[Cla
     
     assigned_explicit: Set[int] = set()
 
-    # PASS 1: Assign explicit IDs
+    # PASS 1: Assign explicit IDs & reconcile canonical categories
     for idx, req in enumerate(requirements):
         explicit_match = None
         for candidate in [req.req_code, req.original_text, req.text, req.source_clause_id]:
@@ -321,6 +339,14 @@ def _assign_canonical_ids(requirements: List[ClassifiedRequirement]) -> List[Cla
             req.req_code = explicit_match
             seen_codes.add(explicit_match)
             assigned_explicit.add(idx)
+
+            # Reconcile category based on explicit prefix if present
+            prefix_match = re.search(r'^REQ-([A-Z0-9]+)-', explicit_match, re.IGNORECASE)
+            if prefix_match:
+                prefix = prefix_match.group(1).upper()
+                if prefix in PREFIX_TO_CATEGORY_MAP:
+                    req.category = PREFIX_TO_CATEGORY_MAP[prefix]
+
             num_match = re.search(r'-(\d{3,4})$', explicit_match)
             if num_match:
                 cat = req.category if req.category in CATEGORY_PREFIX_MAP else "Technical"

@@ -85,7 +85,7 @@ def assess_risks_node(state: RFPProposalState) -> Dict[str, Any]:
 
             if attention_items:
                 prompt_items_summary = []
-                for item in attention_items[:20]:
+                for item in attention_items:
                     r = item["req"]
                     c = item["comp"]
                     prompt_items_summary.append({
@@ -247,27 +247,35 @@ def _determine_clarification_type(status: str, req_text: str, q_text: str = "") 
 def _determine_target_owner(category: str, status: str, clarif_type: str = "ISSUER_CLARIFICATION") -> str:
     cat = (category or "").lower()
     if clarif_type == "INTERNAL_INFORMATION_REQUEST":
+        if "doc" in cat:
+            return "Internal Technical Documentation Lead"
         if "cert" in cat or "secur" in cat:
             return "Internal Security & Compliance Lead"
         if "legal" in cat or "contract" in cat:
             return "Internal Legal Counsel"
-        if "tech" in cat or "arch" in cat:
-            return "Internal Technical Architect"
         if "commerc" in cat or "financ" in cat or "price" in cat:
             return "Internal Finance & Commercial Lead"
         if "deliver" in cat or "timeline" in cat:
             return "Internal Project Delivery Director"
+        if "elig" in cat:
+            return "Internal Compliance & Eligibility SME"
+        if "tech" in cat or "arch" in cat:
+            return "Internal Technical Architect"
         return "Internal Bid Team / SME"
     else:
         # ISSUER_CLARIFICATION
+        if "doc" in cat:
+            return "RFP Issuing Authority / Documentation Lead"
         if "legal" in cat or "contract" in cat:
             return "RFP Issuing Authority / Contracting Officer"
         if "commerc" in cat or "financ" in cat or "price" in cat:
             return "RFP Issuing Authority / Commercial Lead"
-        if "tech" in cat or "arch" in cat:
-            return "RFP Issuing Authority / Technical Committee"
         if "cert" in cat:
             return "RFP Issuing Authority / Compliance Office"
+        if "deliver" in cat:
+            return "RFP Issuing Authority / Project Manager"
+        if "tech" in cat or "arch" in cat:
+            return "RFP Issuing Authority / Technical Committee"
         return "RFP Issuing Authority / Procurement Officer"
 
 
@@ -310,7 +318,7 @@ def _apply_programmatic_safety_guard(
                 continue
             seen_risk_reqs.add(req_id)
 
-        # Determine status and mandatory
+        # Determine status, mandatory, and CANONICAL category
         status = comp_info.get("status") if comp_info else "INFORMATION_REQUIRED"
         is_mandatory = req_info.get("is_mandatory", False) if req_info else False
         category = req_info.get("category", risk.category or "Operational") if req_info else (risk.category or "Operational")
@@ -395,13 +403,9 @@ def _apply_programmatic_safety_guard(
                 q_text=q_text
             )
 
-        # Reconcile target owner
-        target_owner = clarif.target_owner
+        # Reconcile target owner strictly using canonical category
         category = req_info.get("category") if req_info else "General"
-        if not target_owner or target_owner in ["Bid Manager", "General"]:
-            target_owner = _determine_target_owner(category, status, clarif_type)
-        elif clarif_type == "INTERNAL_INFORMATION_REQUEST" and "issuing authority" in target_owner.lower():
-            target_owner = _determine_target_owner(category, status, clarif_type)
+        target_owner = _determine_target_owner(category, status, clarif_type)
 
         validated_clarifs.append(
             ClarificationQuestion(
@@ -630,6 +634,21 @@ def _fallback_risk_analysis(
                     q_text = f"Regarding certification requirement {req_code} ('{req_text[:120]}'): Please confirm whether the company currently holds a valid certification and provide the relevant certificate and documentation."
                     owner = "Internal Security & Compliance Lead"
                     rationale = "Certification evidence is unverified in company knowledge base. Internal confirmation and certificate copy are required to substantiate proposal claims."
+                elif "doc" in category.lower():
+                    clarif_type = "INTERNAL_INFORMATION_REQUEST"
+                    q_text = f"Regarding documentation requirement {req_code} ('{req_text[:120]}'): Please confirm internal availability of technical documentation, user guides, and training collateral."
+                    owner = "Internal Technical Documentation Lead"
+                    rationale = "Documentation collateral is unverified in knowledge base; internal team must confirm documentation availability."
+                elif "commerc" in category.lower() or "financ" in category.lower():
+                    clarif_type = "INTERNAL_INFORMATION_REQUEST"
+                    q_text = f"Regarding commercial requirement {req_code} ('{req_text[:120]}'): Please confirm pricing structure, commercial model, and payment schedule alignment."
+                    owner = "Internal Finance & Commercial Lead"
+                    rationale = "Commercial details require internal finance team verification prior to proposal commitment."
+                elif "sub" in category.lower():
+                    clarif_type = "INTERNAL_INFORMATION_REQUEST"
+                    q_text = f"Regarding submission requirement {req_code} ('{req_text[:120]}'): Please confirm proposal submission format, packaging, and delivery logistics."
+                    owner = "Internal Bid Team / SME"
+                    rationale = "Submission instructions require internal bid team logistics verification."
                 elif "deliver" in category.lower() or "timeline" in category.lower():
                     clarif_type = "INTERNAL_INFORMATION_REQUEST"
                     q_text = f"Regarding delivery requirement {req_code} ('{req_text[:120]}'): Please confirm internal delivery timeline feasibility, staffing availability, and project milestone schedule."

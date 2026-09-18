@@ -171,3 +171,104 @@ def test_2_end_to_end_downstream_stable_id_invariant():
         assert resp["is_mandatory"] == canonical_req["is_mandatory"], (
             f"Proposal response mandatory flag mismatch for {code}!"
         )
+
+
+def test_3_explicit_category_preservation_and_downstream_metadata_invariant():
+    """
+    Regression & Invariant Test:
+    Asserts that explicit requirement categories are preserved in Agent 2 classification
+    and downstream objects (Compliance, Risks, Clarifications, Proposal Writer) preserve:
+    - REQ-COMM-001.category == Commercial
+    - REQ-COMM-002.category == Commercial
+    - REQ-CON-001.category == Contractual
+    - REQ-DEL-001.category == Delivery
+    - REQ-DOC-001.category == Documentation
+    - REQ-SUB-001.category == Submission
+    - REQ-SUB-002.category == Submission
+    
+    Invariant:
+    For every downstream object:
+    - downstream.requirement_id -> canonical requirement
+    - downstream.category == canonical.category
+    - downstream.requirement_text == canonical.requirement_text
+    - downstream.is_mandatory == canonical.is_mandatory
+    """
+    raw_clauses = [
+        RawClause(clause_id="c1", text="REQ-TECH-001: The system shall be a web-based inventory management application.", source_page=1, source_section="Technical"),
+        RawClause(clause_id="c2", text="REQ-COMM-001: Pricing must include fixed implementation price and annual support price.", source_page=3, source_section="Commercial"),
+        RawClause(clause_id="c3", text="REQ-COMM-002: All pricing quotes must be specified in INR currency.", source_page=3, source_section="Commercial"),
+        RawClause(clause_id="c4", text="REQ-CON-001: Liquidated damages for delay shall not exceed 10% of total contract value.", source_page=5, source_section="Contractual"),
+        RawClause(clause_id="c5", text="REQ-DEL-001: Complete implementation must be concluded within 16 weeks of contract award.", source_page=4, source_section="Delivery"),
+        RawClause(clause_id="c6", text="REQ-DOC-001: Comprehensive administrator and end-user guides must be provided.", source_page=4, source_section="Documentation"),
+        RawClause(clause_id="c7", text="REQ-SUB-001: Proposal must be submitted in a sealed envelope before the deadline.", source_page=5, source_section="Submission"),
+        RawClause(clause_id="c8", text="REQ-SUB-002: Electronic copy of the proposal must be provided on a USB drive.", source_page=5, source_section="Submission"),
+    ]
+
+    state = {
+        "raw_clauses": [c.model_dump() for c in raw_clauses],
+        "logs": []
+    }
+
+    # Step 1: Agent 2 Classification
+    cls_result = classify_requirements_node(state)
+    reqs = cls_result["requirements"]
+    canonical_map = {r["req_code"]: r for r in reqs}
+
+    # Verify all 7 explicit category assertions in Classifier output
+    assert canonical_map["REQ-COMM-001"]["category"] == "Commercial", f"Expected Commercial, got {canonical_map['REQ-COMM-001']['category']}"
+    assert canonical_map["REQ-COMM-002"]["category"] == "Commercial", f"Expected Commercial, got {canonical_map['REQ-COMM-002']['category']}"
+    assert canonical_map["REQ-CON-001"]["category"] == "Contractual", f"Expected Contractual, got {canonical_map['REQ-CON-001']['category']}"
+    assert canonical_map["REQ-DEL-001"]["category"] == "Delivery", f"Expected Delivery, got {canonical_map['REQ-DEL-001']['category']}"
+    assert canonical_map["REQ-DOC-001"]["category"] == "Documentation", f"Expected Documentation, got {canonical_map['REQ-DOC-001']['category']}"
+    assert canonical_map["REQ-SUB-001"]["category"] == "Submission", f"Expected Submission, got {canonical_map['REQ-SUB-001']['category']}"
+    assert canonical_map["REQ-SUB-002"]["category"] == "Submission", f"Expected Submission, got {canonical_map['REQ-SUB-002']['category']}"
+
+    # Step 2: Agent 3 Compliance Node
+    state["requirements"] = reqs
+    comp_result = analyze_compliance_node(state)
+    compliance_matrix = comp_result["compliance_matrix"]
+
+    for comp in compliance_matrix:
+        code = comp["req_code"]
+        assert code in canonical_map, f"Unknown req_code in compliance matrix: {code}"
+        canon = canonical_map[code]
+        assert comp["category"] == canon["category"], f"Compliance category mismatch for {code}! Expected {canon['category']}, got {comp['category']}"
+        assert comp["requirement_text"] == canon["text"], f"Compliance text mismatch for {code}!"
+
+    # Step 3: Agent 4 Risk & Clarification Node
+    state["compliance_matrix"] = compliance_matrix
+    risk_result = assess_risks_node(state)
+    risks = risk_result["risks"]
+    clarifs = risk_result["clarification_questions"]
+
+    for rk in risks:
+        code = rk.get("requirement_id")
+        if code and code in canonical_map:
+            canon = canonical_map[code]
+            assert rk["category"] == canon["category"], f"Risk category mismatch for {code}! Expected {canon['category']}, got {rk['category']}"
+            assert rk["requirement_text"] == canon["text"], f"Risk requirement_text mismatch for {code}!"
+
+    for cl in clarifs:
+        code = cl.get("requirement_id")
+        if code and code in canonical_map:
+            canon = canonical_map[code]
+            # Ensure target owner matches canonical category
+            target_owner = cl.get("target_owner", "")
+            if canon["category"] == "Documentation":
+                assert "Documentation" in target_owner or "Bid" in target_owner or "Procurement" in target_owner, f"Clarification target_owner mismatch for REQ-DOC-001: got {target_owner}"
+
+    # Step 4: Agent 5 Proposal Writer Node
+    state["risks"] = risks
+    state["clarification_questions"] = clarifs
+    writer_result = write_proposal_node(state)
+    draft = writer_result["proposal_drafts"][-1]
+    responses = draft["requirement_responses"]
+
+    for resp in responses:
+        code = resp["requirement_id"]
+        assert code in canonical_map, f"Unknown requirement_id in proposal response: {code}"
+        canon = canonical_map[code]
+        assert resp["category"] == canon["category"], f"Writer response category mismatch for {code}! Expected {canon['category']}, got {resp['category']}"
+        assert resp["requirement_text"] == canon["text"], f"Writer response requirement_text mismatch for {code}!"
+        assert resp["is_mandatory"] == canon["is_mandatory"], f"Writer response is_mandatory mismatch for {code}!"
+
