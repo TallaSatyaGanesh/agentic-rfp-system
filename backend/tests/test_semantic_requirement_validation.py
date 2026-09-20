@@ -277,6 +277,7 @@ def test_semantic_category_determination():
         ("The successful bidder shall enter into an Agreement with the RCS-<State_Name>, in the format prescribed, within 15 days of being notified to do so.", "Contractual"),
         ("The Bidder shall be deemed to have complied with all clauses & Annexures in the RFP document under all sections.", "Contractual"),
         ("The Service Provider shall be legally bound to hand over all the project related documents, data and information upon exit.", "Contractual"),
+        ("Providing support throughout the period of Development, Warranty & O&M period.", "Contractual"),
         # Commercial
         ("Data migration from legacy systems shall be performed at no additional cost to the client.", "Commercial"),
         ("Payments shall be processed on a pro-rata milestone basis upon verification of deliverables.", "Commercial"),
@@ -290,6 +291,8 @@ def test_semantic_category_determination():
         ("The System Integrator will also provide the training/handholding to all the stakeholders.", "Delivery"),
         ("The SI shall also be responsible to provide helpdesk support for the smooth rollout/implementation.", "Delivery"),
         ("The successful bidder shall nominate a Project manager for the entire period of the contract.", "Delivery"),
+        ("Successful bidder shall submit a detailed project implementation plan and clearly spell out important milestones of project immediately after the award of work.", "Delivery"),
+        ("Total project development duration should not exceed 3 months from the date of contract signing.", "Delivery"),
         # Documentation
         ("The vendor must deliver weekly status reports, monthly SLA compliance dashboards, and user manuals.", "Documentation"),
         ("Documented RESTful API specifications and database schema runbooks must be submitted prior to go-live.", "Documentation"),
@@ -301,7 +304,8 @@ def test_semantic_category_determination():
         ("Both the proposals must be submitted in separate password protected files (PDF and ZIP) to the email:", "Submission"),
         ("The bids prepared by the bidder and all correspondence shall be in the English language.", "Submission"),
         ("There should be no handwritten material, corrections or alterations in the offer.", "Submission"),
-        ("Correct technical information about the product and services being offered must be filled in.", "Submission"),
+        ("In case terms and conditions are not acceptable, the bidder should clearly specify deviation in Technical Bid with Form - Statement of Deviations from Bid Terms and conditions.", "Submission"),
+        ("All bidders need to comply with Terms and Conditions and provide necessary documentation/proof to support the credentials.", "Submission"),
         ("Bids of only those Bidders who quote for the complete Scope of Work and Supply of Goods/Services shall be considered.", "Submission"),
         ("The information provided by the Bidder must be true and correct", "Submission"),
         # Eligibility
@@ -318,7 +322,8 @@ def test_semantic_category_determination():
         # Technical
         ("The database shall support active-active clustering with automated failover and zero data loss.", "Technical"),
         ("The system shall enforce role-based access control (RBAC) with granular permission sets.", "Technical"),
-        ("The RCS Portal/ database will be linked with the National Cooperative Database (NCD) for real time updation.", "Technical")
+        ("The RCS Portal/ database will be linked with the National Cooperative Database (NCD) for real time updation.", "Technical"),
+        ("Reports should also be available as On-Screen Reports with the capability of exporting it to any user defined format such as word, excel pdf, etc. & print and email feature.", "Technical")
     ]
 
     for clause, expected_cat in category_cases:
@@ -366,6 +371,90 @@ def test_paired_template_placeholders_vs_genuine_portal_instructions():
     ]
     for clause in genuine_instructions:
         assert not _is_non_requirement_heading_or_criterion(clause), f"Expected genuine instruction '{clause}' to be accepted."
+
+
+def test_paired_generic_form_filling_vs_genuine_form_system_specs():
+    """Validates exclusion of generic form-filling template prompts while preserving genuine form/system capabilities."""
+    generic_prompts = [
+        "Technical details must be filled in.",
+        "Correct technical information about the product and services being offered must be filled in.",
+        "Responses must be filled in by the applicant."
+    ]
+    for clause in generic_prompts:
+        assert _is_non_requirement_heading_or_criterion(clause), f"Expected generic form filling prompt '{clause}' to be rejected."
+
+    genuine_form_specs = [
+        "The system shall provide a configurable form builder supporting text, date, and dropdown fields.",
+        "The platform must validate all mandatory form fields before submission.",
+        "Dynamic form templates shall be maintainable by administrator users without system re-compilation."
+    ]
+    for clause in genuine_form_specs:
+        assert not _is_non_requirement_heading_or_criterion(clause), f"Expected genuine form requirement '{clause}' to be accepted."
+
+
+def test_paired_vague_ui_narrative_vs_genuine_dynamic_form_generation():
+    """Validates exclusion of vague UI field display statements while preserving dynamic form generation/logic capabilities."""
+    vague_narratives = [
+        "The system will display relevant fields in the form.",
+        "The portal will display relevant fields in the form."
+    ]
+    for clause in vague_narratives:
+        assert _is_non_requirement_heading_or_criterion(clause), f"Expected vague UI narrative '{clause}' to be rejected."
+
+    genuine_ui_capabilities = [
+        "The system shall dynamically generate form fields based on the selected applicant category and role.",
+        "The system will display real-time dashboard analytics with interactive drill-down charts.",
+        "The web portal will display encrypted audit trail logs to authorized compliance officers."
+    ]
+    for clause in genuine_ui_capabilities:
+        assert not _is_non_requirement_heading_or_criterion(clause), f"Expected genuine UI capability '{clause}' to be accepted."
+
+
+def test_paired_prebid_query_deadline_vs_vendor_support_query_sla():
+    """Validates exclusion of buyer pre-bid clarification query deadlines while preserving vendor support/query SLAs."""
+    prebid_deadlines = [
+        "The queries must reach the RCS-<State_Name> before “Last date for submission of written queries for clarifications on RFP document” as specified in the Time Schedule.",
+        "Queries must reach the procuring entity before the last date for submission of queries.",
+        "Written clarifications must reach the client before the last date for submission of written queries."
+    ]
+    for clause in prebid_deadlines:
+        assert _is_non_requirement_heading_or_criterion(clause), f"Expected pre-bid clarification deadline '{clause}' to be rejected."
+
+    vendor_query_slas = [
+        "The vendor shall respond to all technical support queries within 2 hours of receipt.",
+        "The helpdesk shall resolve high priority queries within 4 hours.",
+        "The service provider must maintain an issue and query resolution log updated in real-time."
+    ]
+    for clause in vendor_query_slas:
+        assert not _is_non_requirement_heading_or_criterion(clause), f"Expected vendor query SLA '{clause}' to be accepted."
+
+
+def test_deduplication_and_supplementary_sentence_stitching():
+    """Validates robust semantic deduplication and short supplementary delivery sentence stitching."""
+    from app.agents.extractor_agent import _normalize_clause_sig, _stitch_blocks
+    from app.services.document_parser import ExtractedBlock
+
+    # 1. Deduplication signature test
+    sig1 = _normalize_clause_sig("Bidder should enclose all compliance against each annexure in technical bid")
+    sig2 = _normalize_clause_sig("The bidder should enclose all compliance against each annexure in technical bid.")
+    assert sig1 == sig2, f"Expected normalized signatures to match: '{sig1}' vs '{sig2}'"
+
+    # 2. Supplementary delivery sentence stitching
+    b1 = ExtractedBlock(
+        text="During UAT or after Go-Live training shall be provided by vendor to RCS-<State_Name>.",
+        page_number=33,
+        section_title="4.4 Go-Live & Training",
+        block_type="paragraph"
+    )
+    b2 = ExtractedBlock(
+        text="Training will be conducted on VC.",
+        page_number=33,
+        section_title="4.4 Go-Live & Training",
+        block_type="paragraph"
+    )
+    stitched = _stitch_blocks([b1, b2])
+    assert len(stitched) == 1, f"Expected 1 stitched block, got {len(stitched)}"
+    assert "Training will be conducted on VC" in stitched[0].text
 
 
 def test_paired_buyer_payment_policy_vs_vendor_cost_obligation():
@@ -441,3 +530,4 @@ def test_mandatory_vs_optional_modal_parsing():
         is_m, prio, conf, reason = _determine_mandatory(text)
         assert is_m is False
         assert conf == 0.0
+

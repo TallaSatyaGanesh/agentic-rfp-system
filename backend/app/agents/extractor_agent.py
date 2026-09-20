@@ -686,6 +686,10 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         ):
             return True
 
+    # 9.5 Vague UI Form Display Narrative without actionable specifications
+    if re.search(r'^(?:the\s+)?(?:system|portal|application|form)\s+will\s+display\s+relevant\s+fields\s+in\s+the\s+form\.?\s*$', clean_text, re.IGNORECASE):
+        return True
+
     # 10. Tender Deposits, EMD, and Bank Guarantee Logistics
     if (
         re.search(r'\b(?:online\s+payment\s+of\s+emd|payment\s+of\s+emd|earnest\s+money\s+deposit|bid\s+security\s+deposit|tender\s+fee|cost\s+of\s+tender)\b', clean_text, re.IGNORECASE)
@@ -713,7 +717,7 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
 
     # 13. Table Column Headers
     if (
-        re.search(r'\b(?:Req\s*ID|Requirement\s*ID|Item\s*#|Clause\s*#|Ref\s*#|S\.?No\.?)\b', clean_text, re.IGNORECASE)
+        re.search(r'\b(?:Req\s*ID|Requirement\s*ID|Item\s*#|Clause\s*#|Ref\s*#|Sl\.?\s*No\.?)\b', clean_text, re.IGNORECASE)
         and re.search(r'\b(?:Category|Specification|Description|Mandatory|Priority|Status|Compliance|Deliverable|Feature)\b', clean_text, re.IGNORECASE)
     ) and not has_obligation_modal:
         return True
@@ -724,6 +728,8 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         or re.search(r'\bproposals?\s+received\s+after\s+the\s+due\s+date\s+(?:&\s*time|\band\s+time)?\s+will\s+not\s+be\s+considered\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:the\s+)?offers?\s+containing\s+erasures\s+or\s+alterations\s+will\s+not\s+be\s+considered\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:the\s+)?bidder\s+shall\s+prepare\s+the\s+bid\s+based\s+on\s+details\s+provided\s+in\s+the\s+rfp\s+documents?\.?\s*$', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:technical\s+details|technical\s+information|details|responses?)\s+must\s+be\s+filled\s+in\b', clean_text, re.IGNORECASE)
+        or re.search(r'\bcorrect\s+technical\s+information\s+about\s+the\s+product[^\n\r.]+?must\s+be\s+filled\s+in\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:state\s+(?:their|its)?\s*compliance|indicate\s+(?:their|its)?\s*compliance|confirm\s+(?:their|its)?\s*compliance)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:unsupported\s+claims|cannot\s+be\s+(?:fully\s+)?confirmed|identify\s+the\s+limitation)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:respond\s+to\s+(?:each|this|every)\s+requirement|address\s+(?:each|all)\s+requirements?\s+in\s+(?:the|their|its)\s+proposal)\b', clean_text, re.IGNORECASE)
@@ -745,8 +751,8 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
             or re.search(r'\b(?:in\s+case\s+of\s+(?:any\s+)?change\s+in\s+(?:the\s+)?schedule\s+of\s+(?:the\s+)?pre-bid|changed\s+schedule\s+shall\s+be\s+notified\s+(?:of\s+)?through\s+email)\b', clean_text, re.IGNORECASE)
             or re.search(r'\bqueries\s+(?:received|submitted)\s+after\s+(?:the\s+)?due\s+date\s+(?:for\s+pre-bid|will\s+not\s+be\s+entertained)\b', clean_text, re.IGNORECASE)
             or re.search(r'\b(?:queries\s+must\s+be\s+submitted\s+in\s+microsoft\s+excel\s+format|clarification\s+to\s+be\s+sought\s+name\s+of\s+bidder|common\s+set\s+of\s+conditions/deviations|during\s+the\s+pre-bid\s+conferences?,\s+the\s+bidders\s+will\s+be\s+free\s+to\s+seek\s+clarifications)\b', clean_text, re.IGNORECASE)
-            or re.search(r'\b(?:not\s+finding\s+place\s+in\s+c\.?s\.?d\.?|deemed\s+to\s+have\s+been\s+rejected\s+by\s+(?:the\s+)?[a-z0-9_ -]+)\b', clean_text, re.IGNORECASE)
-            or re.search(r'\bqueries\s+must\s+reach\s+(?:the\s+)?[a-z0-9_ -]+\s+before\s+[‘\'"]?last\s+date\s+for\s+submission\s+of\s+written\s+queries\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:not\s+finding\s+place\s+in\s+c\.?s\.?d\.?|deemed\s+to\s+have\s+been\s+rejected\s+by\s+(?:the\s+)?[^\n\r.]+?)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:queries|clarifications)\s+must\s+reach\s+(?:the\s+)?[^\n\r.]+?\s+before\s*[\'\"‘“\[]?\s*(?:the\s+)?last\s+date\s+for\s+submission\s+of\s+(?:written\s+)?queries\b', clean_text, re.IGNORECASE)
         ):
             return True
 
@@ -843,10 +849,19 @@ def _stitch_blocks(blocks: List[ExtractedBlock]) -> List[ExtractedBlock]:
             first_char = next_text_cleaned[0] if next_text_cleaned else ''
             next_starts_continuation = first_char.islower() or first_char in (',', '.', ';', ':', ')', ']', '}', '"', '”', '’')
 
+            # Supplementary delivery/support mode sentence e.g. "Training will be conducted on VC." following a training requirement
+            is_short_supplementary = (
+                len(next_text_cleaned.split()) <= 7
+                and bool(re.match(r'^(?:training|testing|support|meetings?|sessions?)\s+(?:will|shall)\s+be\s+(?:conducted|provided|held|done)\b', next_text_cleaned, re.IGNORECASE))
+                and bool(re.search(r'\b(?:training|testing|support|meetings?)\b', curr_text, re.IGNORECASE))
+            )
+
             should_stitch = False
             if ends_in_dangling:
                 should_stitch = True
             elif not curr_ends_sentence and next_starts_continuation:
+                should_stitch = True
+            elif is_short_supplementary:
                 should_stitch = True
 
             if should_stitch:
@@ -1031,9 +1046,11 @@ def _create_block_batches(
 
 
 def _normalize_clause_sig(text: str) -> str:
-    """Computes a normalized signature for deduplication."""
-    cleaned = re.sub(r'[^a-z0-9]', '', text.lower())
-    return cleaned[:100]
+    """Computes a robust semantic signature for deduplication."""
+    # Strip leading common determiners / list markers e.g. "The", "A", "An", "All", "1.", "•"
+    clean = re.sub(r'^\s*(?:[•\-\*\uf0b7–—\u25cb\u25ef\u25e6\u2022\u2219\u2043]|\([0-9a-zA-Z]\)|\d{1,2}(?:\.\d{1,2}){0,3}[\.\)]|[a-zA-Z][\.\)]|[oO]\s{2,}|\b(?:the|a|an|all)\b)\s+', '', text, flags=re.IGNORECASE)
+    cleaned = re.sub(r'[^a-z0-9]', '', clean.lower())
+    return cleaned[:250]
 
 
 def _sanitize_metadata(meta: RFPMetadata) -> RFPMetadata:
