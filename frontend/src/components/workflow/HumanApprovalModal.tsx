@@ -95,15 +95,15 @@ export const HumanApprovalModal: React.FC<Props> = ({
 
   // Extract metrics for Gate 1
   const complianceScore = status.compliance_score ?? 0;
-  const criticalRisks = risks.filter((r) => r.severity === 'CRITICAL');
-  const highRisks = risks.filter((r) => r.severity === 'HIGH');
+  const criticalRisks = risks.filter((r) => (r.severity || '').toUpperCase() === 'CRITICAL');
+  const highRisks = risks.filter((r) => (r.severity || '').toUpperCase() === 'HIGH');
 
   // Extract findings for Gate 2
   const allFindings: ReviewFinding[] = reviewReport?.findings || [];
-  const criticalFindings: ReviewFinding[] = allFindings.filter((f) => f.severity === 'CRITICAL');
-  const highFindings: ReviewFinding[] = allFindings.filter((f) => f.severity === 'HIGH');
+  const criticalFindings: ReviewFinding[] = allFindings.filter((f) => (f.severity || '').toUpperCase() === 'CRITICAL');
+  const highFindings: ReviewFinding[] = allFindings.filter((f) => (f.severity || '').toUpperCase() === 'HIGH');
   const otherFindings: ReviewFinding[] = allFindings.filter(
-    (f) => f.severity !== 'CRITICAL' && f.severity !== 'HIGH'
+    (f) => (f.severity || '').toUpperCase() !== 'CRITICAL' && (f.severity || '').toUpperCase() !== 'HIGH'
   );
 
   const toggleFindingExpanded = (findingId: string) => {
@@ -376,7 +376,7 @@ export const HumanApprovalModal: React.FC<Props> = ({
                   <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                     {[...criticalFindings, ...highFindings].map((finding) => {
                       const isExpanded = expandedFindings[finding.finding_id] || false;
-                      const isCrit = finding.severity === 'CRITICAL';
+                      const isCrit = (finding.severity || '').toUpperCase() === 'CRITICAL';
 
                       return (
                         <div

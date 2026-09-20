@@ -232,7 +232,8 @@ async def run_workflow_async(rfp_id: str, file_path: str):
                     "data": {
                         "compliance_score": current_state.values.get("overall_compliance_score", 0),
                         "requirements_count": len(current_state.values.get("requirements", [])),
-                        "high_risks_count": len([r for r in current_state.values.get("risks", []) if r.get("severity") == "High"])
+                        "high_risks_count": len([r for r in current_state.values.get("risks", []) if (r.get("severity") or "").upper() == "HIGH"]),
+                        "critical_risks_count": len([r for r in current_state.values.get("risks", []) if (r.get("severity") or "").upper() == "CRITICAL"])
                     }
                 })
             elif next_node == "human_final_approval_gate":

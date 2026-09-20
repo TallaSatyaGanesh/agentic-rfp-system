@@ -159,10 +159,13 @@ export const RFPWorkspace: React.FC<Props> = ({ rfpId, onBack }) => {
           }
         }
 
-        // Authoritative status reload
-        loadStatus();
-        if (['node_completed', 'human_approval_required', 'workflow_finished'].includes(eventType)) {
-          loadDataOutputs();
+        // Authoritative coordinated reload
+        if (eventType === 'human_approval_required' || eventType === 'workflow_finished') {
+          loadAllData();
+        } else if (eventType === 'node_completed') {
+          loadAllData();
+        } else {
+          loadStatus();
         }
       },
       (connStatus) => {
@@ -185,7 +188,7 @@ export const RFPWorkspace: React.FC<Props> = ({ rfpId, onBack }) => {
     if (connectionStatus === 'connected') return;
 
     const interval = window.setInterval(() => {
-      loadStatus();
+      loadAllData();
     }, 3500);
 
     return () => {
@@ -194,7 +197,61 @@ export const RFPWorkspace: React.FC<Props> = ({ rfpId, onBack }) => {
   }, [isWorkflowActive, connectionStatus]);
 
   const loadAllData = async () => {
-    await Promise.all([loadDetails(), loadStatus(), loadDataOutputs()]);
+    try {
+      const [details, st, outputs] = await Promise.all([
+        api.getRFPDetails(rfpId).catch((err) => {
+          console.error('Failed to load RFP details:', err);
+          return null;
+        }),
+        api.getWorkflowStatus(rfpId).catch((err) => {
+          console.error('Failed to load status:', err);
+          return null;
+        }),
+        loadDataOutputs()
+      ]);
+
+      if (details) {
+        setRfp(details);
+      }
+
+      if (st) {
+        setStatus((prev) => {
+          if (!prev) return st;
+          // Accept new run version immediately
+          if (st.current_version > prev.current_version) return st;
+
+          const prevP = STATE_PRECEDENCE[prev.status] ?? 0;
+          const nextP = STATE_PRECEDENCE[st.status] ?? 0;
+
+          // Prevent regressing state from more advanced stage during the same version/revision
+          if (
+            nextP < prevP &&
+            prev.current_version === st.current_version &&
+            prev.revision_count >= st.revision_count
+          ) {
+            return {
+              ...prev,
+              logs: st.logs && st.logs.length > 0 ? st.logs : prev.logs
+            };
+          }
+          return st;
+        });
+
+        const ALLOWED_APPROVAL_STATES: WorkflowState[] = [
+          'AWAITING_GO_NOGO',
+          'AWAITING_FINAL_APPROVAL',
+          'HUMAN_REVIEW_REQUIRED'
+        ];
+
+        if (st.is_interrupted && ALLOWED_APPROVAL_STATES.includes(st.status)) {
+          setIsApprovalOpen(true);
+        } else {
+          setIsApprovalOpen(false);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load all data:', err);
+    }
   };
 
   const loadDetails = async () => {
@@ -238,6 +295,8 @@ export const RFPWorkspace: React.FC<Props> = ({ rfpId, onBack }) => {
       ];
 
       if (st.is_interrupted && ALLOWED_APPROVAL_STATES.includes(st.status)) {
+        // Ensure outputs are loaded before opening modal
+        await loadDataOutputs();
         setIsApprovalOpen(true);
       } else {
         setIsApprovalOpen(false);
@@ -255,14 +314,35 @@ export const RFPWorkspace: React.FC<Props> = ({ rfpId, onBack }) => {
         api.getProposals(rfpId),
       ]);
 
-      if (compRes.status === 'fulfilled') setComplianceItems(compRes.value);
-      if (riskRes.status === 'fulfilled') {
-        setRisks(riskRes.value.risks || []);
-        setClarifications(riskRes.value.clarification_questions || []);
+      let comp: ComplianceItem[] = [];
+      let rList: RiskItem[] = [];
+      let qList: ClarificationQuestion[] = [];
+      let pList: ProposalDraft[] = [];
+
+      if (compRes.status === 'fulfilled') {
+        comp = compRes.value || [];
+        setComplianceItems(comp);
       }
-      if (propRes.status === 'fulfilled') setProposals(propRes.value);
+      if (riskRes.status === 'fulfilled') {
+        rList = riskRes.value.risks || [];
+        qList = riskRes.value.clarification_questions || [];
+        setRisks(rList);
+        setClarifications(qList);
+      }
+      if (propRes.status === 'fulfilled') {
+        pList = propRes.value || [];
+        setProposals(pList);
+      }
+
+      return {
+        complianceItems: comp,
+        risks: rList,
+        clarifications: qList,
+        proposals: pList
+      };
     } catch (err) {
       console.error('Failed to load data outputs:', err);
+      return null;
     }
   };
 
