@@ -600,4 +600,139 @@ def test_paired_password_features_vs_user_interaction_narratives():
         assert not _is_non_requirement_heading_or_criterion(clause), f"Expected system capability '{clause}' to be accepted."
 
 
+def test_paired_administrative_tender_details_vs_technical_admin_features():
+    """Validates classification of procurement administration details as Administrative while keeping technical admin IAM/privileges as Technical."""
+    admin_paperwork_clauses = [
+        "The proposal must include the name, official address, GST registration, and PAN of the authorized signatory.",
+        "The bidder shall submit the power of attorney authorizing the signatory to bind the company.",
+        "Provide primary liaison and executive contact information in the administrative form.",
+        "The bidder shall provide company registration details and organizational chart."
+    ]
+    for clause in admin_paperwork_clauses:
+        cat, reason = _determine_category(clause, "General")
+        assert cat == "Administrative", f"Expected 'Administrative' for '{clause}', got '{cat}' ({reason})"
+
+    technical_admin_clauses = [
+        "The solution shall support two-factor authentication for privileged administrative accounts.",
+        "The system shall maintain an audit trail for authentication events, appointment changes and administrative configuration changes.",
+        "Access to production administrative functions shall be restricted to authorized personnel and protected by multi-factor authentication.",
+        "The application must enforce role-based access control for administrative roles and clinic users.",
+        "The platform shall provide administrative console access over encrypted TLS 1.3 connections."
+    ]
+    for clause in technical_admin_clauses:
+        cat, reason = _determine_category(clause, "General")
+        assert cat == "Technical", f"Expected 'Technical' for '{clause}', got '{cat}' ({reason})"
+
+
+def test_paired_delivery_implementation_timelines_vs_technical_response_slas():
+    """Validates classification of project implementation and deployment milestones as Delivery while keeping response/uptime SLAs as Technical."""
+    delivery_timeline_clauses = [
+        "The vendor shall complete implementation and production deployment within 14 weeks from contract commencement.",
+        "Complete platform rollout and UAT signoff must be concluded within 90 days after contract award.",
+        "The contractor shall complete delivery and installation within 6 months of work order issuance.",
+        "The vendor shall conduct administrator and clinic-staff training before production deployment.",
+        "The vendor shall migrate appointment master data supplied by Sunrise in an agreed electronic format before production go-live."
+    ]
+    for clause in delivery_timeline_clauses:
+        cat, reason = _determine_category(clause, "General")
+        assert cat == "Delivery", f"Expected 'Delivery' for '{clause}', got '{cat}' ({reason})"
+
+    technical_sla_clauses = [
+        "Critical production incidents shall receive an initial response within 30 minutes of logging.",
+        "The service shall target monthly availability of at least 99.5%, excluding approved scheduled maintenance.",
+        "The system shall process batch appointment synchronization jobs within 15 seconds."
+    ]
+    for clause in technical_sla_clauses:
+        cat, reason = _determine_category(clause, "General")
+        assert cat == "Technical", f"Expected 'Technical' for '{clause}', got '{cat}' ({reason})"
+
+
+def test_paired_documentation_periodic_reports_vs_technical_reporting_features():
+    """Validates classification of recurring deliverable reports as Documentation while keeping in-app UI reporting/dashboards as Technical."""
+    doc_report_clauses = [
+        "The vendor shall provide a monthly service report covering availability, incidents and support performance.",
+        "The contractor shall submit quarterly performance reports and annual compliance audit summaries.",
+        "The vendor must deliver weekly status reports, monthly SLA compliance dashboards, and user manuals.",
+        "Documented RESTful API specifications and database schema runbooks must be submitted prior to go-live."
+    ]
+    for clause in doc_report_clauses:
+        cat, reason = _determine_category(clause, "General")
+        assert cat == "Documentation", f"Expected 'Documentation' for '{clause}', got '{cat}' ({reason})"
+
+    technical_report_clauses = [
+        "The platform shall provide dashboards and downloadable reports for appointment volume, cancellation rates and clinic-level utilization.",
+        "Reports should also be available as On-Screen Reports with the capability of exporting it to any user defined format such as word, excel pdf, etc. & print and email feature.",
+        "The application must support real-time data filtering and chart generation on the analytics screen."
+    ]
+    for clause in technical_report_clauses:
+        cat, reason = _determine_category(clause, "General")
+        assert cat == "Technical", f"Expected 'Technical' for '{clause}', got '{cat}' ({reason})"
+
+
+def test_paired_contractual_performance_security_and_data_covenants_vs_technical_specs():
+    """Validates classification of performance securities and data use restrictions as Contractual while keeping encryption/clustering as Technical."""
+    contractual_clauses = [
+        "A performance security of 5% of the contract value shall be submitted by the selected vendor in the form specified in the final agreement.",
+        "The contractor shall furnish a security deposit equivalent to 3% of the total contract value.",
+        "Patient-related information shall not be used by the vendor for advertising or unrelated commercial purposes.",
+        "The vendor shall not use customer data for any marketing or unauthorized commercial exploitation.",
+        "The bidder shall maintain confidentiality of information received from Sunrise during the engagement and after contract completion.",
+        "The selected vendor shall execute the agreement and applicable confidentiality documents before access to production information is provided."
+    ]
+    for clause in contractual_clauses:
+        cat, reason = _determine_category(clause, "General")
+        assert cat == "Contractual", f"Expected 'Contractual' for '{clause}', got '{cat}' ({reason})"
+
+    technical_security_clauses = [
+        "The solution shall encrypt sensitive information at rest using an industry-standard encryption mechanism.",
+        "The database shall support active-active clustering with automated failover and zero data loss.",
+        "The platform must support encrypted data transmission using TLS 1.2 or higher."
+    ]
+    for clause in technical_security_clauses:
+        cat, reason = _determine_category(clause, "General")
+        assert cat == "Technical", f"Expected 'Technical' for '{clause}', got '{cat}' ({reason})"
+
+
+def test_32_requirement_canonical_category_suite():
+    """Comprehensive regression test ensuring all 32 requirements from the diagnostic map to their correct canonical categories."""
+    suite = [
+        ("Ref. Requirement A1 The proposed platform shall provide a web-based appointment management application accessible through current versions of Chrome, Edge and Firefox.", "Technical"),
+        ("A2 The platform must support role-based access control for administrators, clinic staff and authorized care coordinators.", "Technical"),
+        ("A3 The solution shall support two-factor authentication for privileged administrative accounts.", "Technical"),
+        ("A4 The system shall maintain an audit trail for authentication events, appointment changes and administrative configuration changes.", "Technical"),
+        ("A5 The platform must provide REST APIs for integration with hospital information systems and approved external services.", "Technical"),
+        ("A6 The solution shall provide configurable SMS and email notifications for appointment confirmations, reminders and cancellations.", "Technical"),
+        ("A7 The system shall support appointment creation, rescheduling, cancellation and availability management.", "Technical"),
+        ("A8 The platform shall provide dashboards and downloadable reports for appointment volume, cancellation rates and clinic-level utilization.", "Technical"),
+        ("A9 The vendor shall migrate appointment master data supplied by Sunrise in an agreed electronic format before production go-live.", "Delivery"),
+        ("A10 The vendor shall conduct administrator and clinic-staff training before production deployment.", "Delivery"),
+        ("A11 The vendor shall provide a helpdesk for incident logging and support during the contract term.", "Technical"),
+        ("A12 The solution shall be deployed in a cloud environment approved by Sunrise and shall support encrypted data transmission using TLS 1.2 or higher.", "Technical"),
+        ("The vendor shall complete implementation and production deployment within 14 weeks from contract commencement.", "Delivery"),
+        ("The service shall target monthly availability of at least 99.5%, excluding approved scheduled maintenance.", "Technical"),
+        ("Critical production incidents shall receive an initial response within 30 minutes of logging.", "Technical"),
+        ("The vendor shall provide a monthly service report covering availability, incidents and support performance.", "Documentation"),
+        ("Training sessions shall be conducted through online or on-site delivery as mutually agreed with the project team.", "Delivery"),
+        ("The bidder must have at least five years of experience delivering enterprise software or digital platforms.", "Eligibility"),
+        ("The bidder must demonstrate at least two completed projects of comparable scale involving healthcare or other regulated information.", "Eligibility"),
+        ("The bidder shall provide two client references for comparable implementations.", "Eligibility"),
+        ("The bidder shall submit audited financial statements for the latest two completed financial years.", "Eligibility"),
+        ("The bidder must provide evidence of ISO 27001 or an equivalent recognized information-security certification.", "Certification"),
+        ("The bidder shall submit a fixed implementation fee and a separate annual support fee.", "Commercial"),
+        ("All quoted prices shall be stated in Indian Rupees and shall clearly identify applicable taxes.", "Commercial"),
+        ("The bidder shall maintain confidentiality of information received from Sunrise during the engagement and after contract completion.", "Contractual"),
+        ("The selected vendor shall execute the agreement and applicable confidentiality documents before access to production information is provided.", "Contractual"),
+        ("A performance security of 5% of the contract value shall be submitted by the selected vendor in the form specified in the final agreement.", "Contractual"),
+        ("Patient-related information shall not be used by the vendor for advertising or unrelated commercial purposes.", "Contractual"),
+        ("The solution shall encrypt sensitive information at rest using an industry-standard encryption mechanism.", "Technical"),
+        ("Access to production administrative functions shall be restricted to authorized personnel and protected by multi-factor authentication.", "Technical"),
+        ("The vendor shall notify Sunrise of a confirmed security incident affecting the service within 24 hours of confirmation.", "Technical"),
+        ("The vendor shall maintain documented backup and recovery procedures for production data.", "Technical"),
+    ]
+    for text, expected in suite:
+        cat, reason = _determine_category(text, "General")
+        assert cat == expected, f"Requirement '{text[:60]}...' expected '{expected}', got '{cat}' ({reason})"
+
+
+
 
