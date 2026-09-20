@@ -59,7 +59,7 @@ def extract_rfp_node(state: RFPProposalState) -> Dict[str, Any]:
     metadata = _extract_metadata(blocks)
 
     # 3. Extract Candidate Clauses across the ENTIRE document (Full-Document Strategy)
-    raw_clauses = _extract_all_clauses(blocks)
+    raw_clauses, stats = _extract_all_clauses(blocks)
 
     # 4. Final safety sanity check: ensure no prohibited fictional strings exist
     metadata = _sanitize_metadata(metadata)
@@ -67,7 +67,7 @@ def extract_rfp_node(state: RFPProposalState) -> Dict[str, Any]:
     log_entry = {
         "agent": "Extraction Agent",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "action": f"Extracted metadata and identified {len(raw_clauses)} candidate clauses across {len(blocks)} blocks covering all pages."
+        "action": f"Extracted metadata and identified {len(raw_clauses)} candidate clauses (Evaluated {stats['candidates_evaluated_before_validation']} candidates -> Filtered {stats['candidates_filtered_by_semantic_validation']} non-requirements -> Accepted {stats['candidates_accepted_after_validation']} requirements) across {len(blocks)} blocks covering all pages."
     }
 
     return {
@@ -280,15 +280,18 @@ def _fallback_metadata(blocks: List[ExtractedBlock], context_text: str) -> RFPMe
     )
 
 
-def _extract_all_clauses(blocks: List[ExtractedBlock]) -> List[RawClause]:
+def _extract_all_clauses(blocks: List[ExtractedBlock]) -> tuple[List[RawClause], Dict[str, int]]:
     """
     Extracts candidate clauses across the ENTIRE document (all pages).
     Processes blocks in batches to keep within context limits if LLM is active,
     and runs a comprehensive rule-based extractor to guarantee complete,
     traceable coverage without any hallucinations.
+    Returns (formatted_clauses, stats_dict).
     """
     raw_clauses: List[RawClause] = []
     seen_signatures: Set[str] = set()
+    total_evaluated = 0
+    total_filtered = 0
 
     llm = LLMFactory.get_chat_model()
     batches = _create_block_batches(blocks, max_blocks_per_batch=10, max_chars_per_batch=3500)
@@ -316,7 +319,9 @@ def _extract_all_clauses(blocks: List[ExtractedBlock]) -> List[RawClause]:
                 ])
                 if batch_result and batch_result.clauses:
                     for c in batch_result.clauses:
+                        total_evaluated += 1
                         if _is_non_requirement_heading_or_criterion(c.text):
+                            total_filtered += 1
                             continue
                         norm_sig = _normalize_clause_sig(c.text)
                         if norm_sig and norm_sig not in seen_signatures:
@@ -332,7 +337,10 @@ def _extract_all_clauses(blocks: List[ExtractedBlock]) -> List[RawClause]:
 
     # 2. Rule-Based Clause Extraction across ALL blocks
     # Guarantees full-document coverage, even when LLM is offline or skips blocks
-    rule_clauses = _extract_clauses_rule_based(blocks)
+    rule_clauses, rule_eval_count, rule_filter_count = _extract_clauses_rule_based(blocks)
+    total_evaluated += rule_eval_count
+    total_filtered += rule_filter_count
+
     for rc in rule_clauses:
         norm_sig = _normalize_clause_sig(rc.text)
         if norm_sig and norm_sig not in seen_signatures:
@@ -351,7 +359,15 @@ def _extract_all_clauses(blocks: List[ExtractedBlock]) -> List[RawClause]:
             )
         )
 
-    return formatted_clauses
+    stats = {
+        "candidates_evaluated_before_validation": total_evaluated,
+        "candidates_filtered_by_semantic_validation": total_filtered,
+        "candidates_accepted_after_validation": len(formatted_clauses)
+    }
+
+    print(f"[Agent 1: Extraction] Semantic Validation Summary: Evaluated {total_evaluated} candidates -> Filtered {total_filtered} non-requirements -> Accepted {len(formatted_clauses)} genuine requirement clauses.")
+
+    return formatted_clauses, stats
 
 
 def _classify_section_tier(section_title: str) -> str:
@@ -401,10 +417,15 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     """
     Returns True if the text represents:
     - Section / chapter / subsection headers
+    - Buyer / client / authority internal actions, nominations, payment disbursements, or rights
+    - Strategic objectives, marketing context, or background preambles without concrete vendor obligations
+    - Template drafting placeholders (e.g. <Define the new modules...>, <Define/change the procedure...>)
+    - Proforma agreements, non-judicial stamp paper drafting templates (e.g. WHEREAS We, ...)
+    - Form artifacts (Date, Place, Name, Signature of Authorized Signatory)
+    - Incomplete bullet fragments, dangling colons/prepositions, and SLA preamble headers
     - Evaluation / scoring criteria, committee actions, marks formulas, QCBS calculations
-    - End-user screen click walkthroughs / narrative portal guides
+    - End-user manual screen click walkthroughs (preserving underlying system capabilities)
     - Tender fee, EMD deposit, and Bank Guarantee transaction instructions
-    - Form template placeholders, spreadsheet column numbering, and sample drafting notes
     - Proposal response meta-instructions
     - Table column headers or metadata key-value lines
     
@@ -425,6 +446,13 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         re.IGNORECASE
     ))
 
+    # Check for explicit vendor/contractor subject obligations
+    has_vendor_actor = bool(re.search(
+        r'\b(?:vendor|bidder|contractor|system\s+integrator|si\b|service\s+provider|company|platform|system|application|solution|portal)\s+(?:shall|must|is\s+required\s+to|are\s+required\s+to|will|needs\s+to|should|agrees\s+to|is\s+expected\s+to|is\s+responsible\s+for|guarantees?|undertakes?|provides?)\b',
+        clean_text,
+        re.IGNORECASE
+    ))
+
     # 1. Section / Chapter / Part / Appendix Title Headers
     if re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|ANNEXURE|SCHEDULE|\d+\.)\s+[A-Za-z0-9\s&,\.\-–—:/()]+$', clean_text, re.IGNORECASE) and not has_obligation_modal:
         return True
@@ -433,8 +461,96 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     if re.match(r'^(?:[A-Z]\.|\d+(?:\.\d+)*\.?)\s+[A-Z][A-Za-z0-9\s&,\.\-–—:/()]+$', clean_text) and not has_obligation_modal:
         return True
 
-    # 3. Buyer / Evaluation Committee Actions (Buyer/Committee evaluating, scoring, shortlisting, opening bids)
-    if re.search(r'\b(?:evaluation\s+committee|tender\s+committee|selection\s+committee|scrutiny\s+committee|procurement\s+committee|bid\s+opening\s+committee|competent\s+authority|the\s+buyer|the\s+client|the\s+department|the\s+authority|the\s+pao)\s+(?:will|shall|may|reserves?\s+the\s+right\s+to|evaluates?|scores?|marks?|ranks?|shortlists?|decides?|opens?|determines?|allocates?|allots?|considers?|rejects?)\b', clean_text, re.IGNORECASE):
+    # 3. Buyer / Client / Authority Responsibilities, Disclaimers & Internal Actions
+    # Distinguish buyer-side duties/rights/nominations/reviews/disclaimers from vendor obligations
+    buyer_subjects = r'(?:(?:duly\s+constituted\s+)?(?:the\s+)?)?(?:rcs(?:\s*[-_ ]\s*<[a-z0-9_]+>|\s*<[a-z0-9_]+>|\s+office|\s+[a-z0-9_]+)?|buyer|client|department|authority|state(?:\s+government)?|pao|procuring\s+entity|tender\s+inviting\s+authority|employer|purchaser|evaluation\s+committee|procurement\s+committee|tender\s+scrutiny\s+committee|competent\s+authority|committee)'
+    if re.search(
+        rf'^\s*(?:as\s+specified\s+in\s+this\s+rfp\s*,\s*)?{buyer_subjects}\s+(?:shall|will|must|may|reserves?\s+the\s+right\s+to|has\s+the\s+right\s+to|is\s+responsible\s+for|(?:also\s+)?nominates?|(?:will|shall)\s+(?:also\s+)?nominate|(?:will|shall)\s+take\s+up|takes?\s+up|makes?\s+payments?|(?:will|shall)\s+make\s+payments?|will\s+not\s+make\s+any\s+payments?|releases?\s+payments?|provides?\s+signoff|(?:will|shall)\s+have\s+the\s+right|must\s+include\s+the\s+requirements|wants\s+to\s+develop|designates?|(?:will|shall)\s+designate|provides?\s+office\s+space|(?:will|shall)\s+provide\s+office\s+space|reviews?|(?:will|shall)\s+review|evaluates?|(?:will|shall)\s+evaluate|opens?|(?:will|shall)\s+open|determines?|(?:will|shall)\s+determine|allocates?|(?:will|shall)\s+allocate|examines?|(?:will|shall)\s+examine|scrutinizes?|(?:will|shall)\s+scrutinize)\b',
+        clean_text,
+        re.IGNORECASE
+    ) and not has_vendor_actor:
+        return True
+
+    # Buyer reservation rights & outright bid rejection by client
+    if (
+        re.search(r'\b(?:reserves?\s+the\s+right\s+to\s+accept\s+or\s+reject\s+any\s+proposal|annul\s+the\s+bidding\s+process)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:the\s+)?(?:bid|proposal)\s+will\s+be\s+rejected\s+outright\b', clean_text, re.IGNORECASE)
+    ) and not has_vendor_actor:
+        return True
+
+    # Buyer disclaimers and non-representation clauses
+    if (
+        re.search(r'\b(?:does\s+not\s+make\s+any\s+representation\s+or\s+warranty|makes?\s+no\s+(?:representation\s+or\s+)?warranty|accepts?\s+no\s+liability\s+(?:for\s+any\s+loss|or\s+responsibility)?|is\s+not\s+an\s+offer\s+by|disclaims?\s+all\s+warranties|disclaims?\s+any\s+responsibility)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:neither\s+the\s+(?:client|buyer|authority|rcs|department)\s+nor\s+(?:its|their)\s+employees)\b', clean_text, re.IGNORECASE)
+    ) and not has_vendor_actor:
+        return True
+
+    # Recipient / Prospective Bidder Independent Due Diligence & Investigation Advisories
+    # (Distinguished from genuine vendor assessment/due diligence deliverables)
+    if (
+        re.search(r'\b(?:recipients?|interested\s+part(?:y|ies)|prospective\s+bidders?|applicants?)\s+(?:must|should|is\s+advised\s+to|are\s+advised\s+to|shall)\s+(?:conduct|verify|satisfy|make)\s+(?:its|their)\s+own\s+(?:independent\s+)?(?:investigation|assessment|inquiries|analysis|due\s+diligence)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:recipients?|prospective\s+bidders?)\s+should\s+verify\s+the\s+accuracy,\s*reliability\s+and\s+completeness\b', clean_text, re.IGNORECASE)
+    ) and not has_vendor_actor:
+        return True
+
+    # Committee preliminary examination & responsiveness scrutiny procedures
+    if (
+        re.search(r'\b(?:preliminary\s+examination|scrutiny|examination)\s+of\s+bids?\s+(?:will|shall)\s+be\s+(?:conducted|undertaken|carried\s+out)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:the\s+)?(?:duly\s+constituted\s+)?evaluation\s+committee\s+will\s+evaluate\b', clean_text, re.IGNORECASE)
+    ) and not has_vendor_actor:
+        return True
+
+    # Passive buyer actions (e.g. "will be reviewed by the RCS", "will be evaluated by the client")
+    if re.search(
+        rf'\b(?:will|shall|is\s+to)\s+be\s+(?:reviewed|monitored|evaluated|decided|approved|settled|conducted|examined)\s+by\s+(?:the\s+)?{buyer_subjects}\b',
+        clean_text,
+        re.IGNORECASE
+    ) and not has_vendor_actor:
+        return True
+
+    # 4. Strategic Objectives, Marketing Context & High-Level Purpose Preamble
+    if (
+        re.search(r'\b(?:following\s+)?(?:strategic\s+)?objectives?\s+(?:will\s+be\s+achieved|are\s+as\s+follows|of\s+the\s+project)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:strategic\s+objectives?\s+will\s+be\s+achieved)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:the\s+above\s+solution\s+is\s+designed\s+with\s+flexibility)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:the\s+vision\s+of\s+this\s+program\s+is|project\s+aims\s+at\s+establishing|over\s+the\s+years,\s+the\s+department)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:scope\s+of\s+engagement\s+encompasses|scope\s+of\s+work\s+(?:includes|encompasses)|following\s+high[- ]level\s+areas)[:\s]*$', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:the\s+purpose\s+of\s+this\s+(?:service\s+level\s+requirements?/?agreement|sla|document|section)\s+is\s+to\s+clearly\s+define)\b', clean_text, re.IGNORECASE)
+        or re.search(r'^(?:first|second|next)\s+(?:[a-z]+|\d+)\s+months?\s+period\s+will\s+come\s+under\s+d-?\d+', clean_text, re.IGNORECASE)
+    ):
+        return True
+
+    # 5. Template Placeholders, Drafting Guides & Proforma Agreements
+    if (
+        re.search(r'<(?:define|insert|specify|enter|fill|describe|placeholder|select)\b[^>]*>', clean_text, re.IGNORECASE)
+        or re.search(r'\[(?:please\s+)?(?:attach|define|insert|specify|enter|fill|select|provide)\b[^\]]*\]', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:please\s+attach\s+(?:certified\s+copy|copy\s+of))\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:define\s+the\s+new\s+modules|define/change\s+the\s+procedure|define\s+the\s+requirements?\s+here)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\(?(?:Sample\s+Format|Proforma|Draft\s+Agreement|Standard\s+Format|Template\s+Format)\s*[-–—:]\s*(?:To\s+be\s+executed|To\s+be\s+submitted|On\s+non-judicial|On\s+stamp\s+paper)', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:To\s+be\s+executed\s+on\s+(?:a\s+)?non-judicial\s+stamped?\s+paper)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:WHEREAS\s+We\b|hereinafter\s+referred\s+to\s+as\s+the\s+COMPANY\b|NOW\s+THEREFORE,\s+in\s+consideration\s+of\s+the\s+foregoing\b)', clean_text, re.IGNORECASE)
+    ):
+        return True
+
+    # 6. Form & Signature Artifacts
+    if (
+        re.search(r'^(?:Date|Place|Name|Signature)\s+(?:of\s+)?(?:the\s+)?(?:Authorized\s+Signatory|Bidder|Vendor|Representative|Seal|Designation|Tenderer)[\s…\._]*$', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:Signature\s+of\s+(?:the\s+)?(?:Authorized\s+Signatory|Bidder|Tenderer|Vendor)(?:\s+with\s+(?:Seal|Stamp))?)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:Name\s+of\s+(?:the\s+)?Authorized\s+Signatory|Date\s+Signature\s+of\s+Authorized|Place\s+Name\s+of\s+the\s+Authorized)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:Place\s*:\s*[A-Za-z\s]+\s+Date\s*:\s*[\d\.\-\/]+)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:Sl\.?\s*No\.?\s+Parameter\s+Minimum\s+Specification)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:Name\s+of\s+(?:the\s+)?Authorized\s+Signatory\s*:\s*Designation\s*:)\b', clean_text, re.IGNORECASE)
+        or re.search(r'^\s*Authorized\s+Signatory\s*\[In\s+the\s+capacity\s+of', clean_text, re.IGNORECASE)
+        or re.match(r'^\s*(?:Date|Place|Signature|Name)\s*[:–—\.]+\s*(?:_{3,}|\.{3,}|\(?[A-Za-z\s]+\)?[\s…\._]*)$', clean_text, re.IGNORECASE)
+    ):
+        return True
+
+    # 7. Dangling Fragments, Incomplete Clauses & SLA Preambles
+    if (
+        re.search(r'\b(?:the\s+purpose\s+of\s+this\s+(?:service\s+level\s+requirements?/?agreement|sla|document|section)\s+is\s+to)\s*$', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:functionality\s+will\s+be\s+provided\s+to\s+view\s+(?:this\s+)?changes\s*/\s*audit\s+trail\s+based\s+on\s+various\s+conditions\s+like)\s*$', clean_text, re.IGNORECASE)
+        or re.search(r'^(?:role\s+in\s+monitoring\s+the\s+sla\s+compliance\s+by\s+the|and\s+their\s+operation\s+efficient|and\s+its\s+designated\s+agency|management\.)\b', clean_text, re.IGNORECASE)
+    ):
         return True
 
     # Check if text describes a technical SLA or commercial rate/penalty (so it is not confused with evaluation scoring)
@@ -444,37 +560,43 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         re.IGNORECASE
     ))
 
-    # 4. Evaluation / Scoring Preamble, QCBS Formulas & Marks Allocation
+    # 8. Evaluation / Scoring Preamble, QCBS Formulas, Marks Allocation & Selection Outcomes
     if not is_sla_or_commercial_rate:
         if (
             re.search(r'\b(?:evaluated\s+based\s+on|evaluation(?:\s+&\s+scoring)?\s+criteria|scoring\s+(?:matrix|criteria)|weighting|award\s+criteria)\b', clean_text, re.IGNORECASE)
             or re.search(r'\b(?:proposals?|bids?)\s+(?:will|shall|are\s+to)\s+be\s+(?:evaluated|scored|ranked|marked|opened|shortlisted|assessed|judged|allocated\s+marks|allotted\s+marks|weighed|weighted)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:proposals?|bids?|bidders?)\s+(?:with\s+(?:the\s+)?)?(?:lowest|highest)\s+(?:cost|quote|financial|technical\s+marks?)\s+(?:will|shall)\s+be\s+given\s+a\s+(?:financial|technical)?\s*score\s+of\s+\d+\b', clean_text, re.IGNORECASE)
+            or re.search(r'\bproposals?\s+(?:with\s+the\s+highest\s+technical\s+marks?\s+shall\s+be\s+given\s+a\s+score\s+of)\b', clean_text, re.IGNORECASE)
             or re.search(r'\b(?:technical|financial|quality|cost|combined)\s+(?:marks?|scores?|weights?|points?)\s+(?:shall|will|as\s+allotted)\b', clean_text, re.IGNORECASE)
             or re.search(r'\b(?:highest|lowest)\s+(?:technical|financial|combined)?\s*(?:marks?|scores?|points?)\s+(?:shall|will)\s+be\s+(?:given|ranked|awarded|allotted|allocated)\b', clean_text, re.IGNORECASE)
-            or re.search(r'\b(?:ranked\s+as\s+[HhLl]-?\d+|highest\s+(?:total\s+)?combined\s+score|qcbs\s+(?:70:30|80:20|\d+:\d+)?\s*(?:methodology|formula)?|quality\s+and\s+cost\s+based\s+selection)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:ranked\s+as\s+[HhLl]-?\d+|highest\s+(?:total\s+)?combined\s+score|qcbs\s*(?:\(\s*\d+:\d+\s*\)|\d+:\d+)?\s*(?:methodology|formula)?|quality\s+and\s+cost\s+based\s+selection)\b', clean_text, re.IGNORECASE)
             or re.search(r'\b(?:weighing|weighting)\s+the\s+quality\s+and\s+cost\s+scores\b', clean_text, re.IGNORECASE)
-            or re.search(r'\b(?:proposals?|bidders?)\s+scoring\s+(?:above|below|more\s+than|at\s+least)?\s*\d+%', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:proposals?|bidders?)\s+scoring\s+(?:above|below|more\s+than|at\s+least|less\s+than)?\s*\d+%', clean_text, re.IGNORECASE)
             or re.search(r'\(\s*\d+%\s*\)', clean_text)
             or re.search(r'\b\d+\s*marks\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:only\s+)?(?:one|single)\s+bidder\s+(?:will|shall)\s+be\s+selected\b', clean_text, re.IGNORECASE)
         ):
             return True
 
-    # 5. End-User Portal / Screen Click Journey Walkthrough
-    if (
-        re.search(
-            r'\b(?:user|applicant|citizen|society\s+representative|end-?user|customer|operator|physician|nurse|doctor)\s+(?:will|shall|can|may|must|should|is\s+required\s+to|will\s+be\s+able\s+to|can\s+be\s+able\s+to|is\s+able\s+to)?\s*(?:register|login|logins?|logs?\s+in|log\s+in|clicks?|click|fills?|fill|selects?|select|attaches?|attach|uploads?|upload|downloads?|download|views?|view|enters?|enter|revises?|revise|changes?|change|receives?|receive|submits?|submit)\b',
-            clean_text,
-            re.IGNORECASE
-        )
-        or re.search(r'\b(?:clicks?|click)\s+on\s+(?:the\s+)?(?:edit|submit|save|next|download|upload|search|button|link|icon|tab|print)\b', clean_text, re.IGNORECASE)
-        or re.search(r'\b(?:fills?|fill)\s+(?:the\s+)?(?:responses?|fields?|form|application|basic\s+details|vital\s+signs)\b', clean_text, re.IGNORECASE)
-        or re.search(r'\b(?:enters?|enter)\s+(?:user\s*id|username|password|otp|captcha|registered\s+email)\b', clean_text, re.IGNORECASE)
-        or re.search(r'\b(?:changes?|change)\s+(?:his|her|their)?\s*password\b', clean_text, re.IGNORECASE)
-        or re.search(r'\b(?:system|portal)\s+opens?\s+(?:the\s+)?(?:registration|login|dashboard|page|screen|window|form)\b', clean_text, re.IGNORECASE)
-    ):
-        return True
+    # 9. End-User Portal / Screen Click Journey Walkthrough
+    if not has_vendor_actor:
+        if (
+            re.search(
+                r'\b(?:user|applicant|citizen|society\s+representative|end-?user|customer|operator|physician|nurse|doctor)\s+(?:will|shall|can|may|must|should|is\s+required\s+to|will\s+be\s+able\s+to|can\s+be\s+able\s+to|is\s+able\s+to)?\s*(?:register|login|logins?|logs?\s+in|log\s+in|clicks?|click|fills?|fill|selects?|select|attaches?|attach|uploads?|upload|downloads?|download|views?|view|enters?|enter|revises?|revise|changes?|change|receives?|receive|submits?|submit)\b',
+                clean_text,
+                re.IGNORECASE
+            )
+            or re.search(r'\b(?:clicks?|click)\s+(?:on\s+)?(?:the\s+)?(?:edit|submit|save|next|previous|continue|download|upload|search|button|link|icon|tab|print)\b', clean_text, re.IGNORECASE)
+            or re.search(r'^(?:select|click|choose|enter|type|open)\s+(?:the\s+)?(?:appropriate\s+)?[a-z\s]+(?:from\s+the\s+dropdown|from\s+the\s+list|button|screen|menu)\s+and\s+(?:click|press|select)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:fills?|fill)\s+(?:the\s+)?(?:responses?|fields?|form|application|basic\s+details|vital\s+signs)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:enters?|enter)\s+(?:user\s*id|username|password|otp|captcha|registered\s+email)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:changes?|change)\s+(?:his|her|their)?\s*password\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:system|portal)\s+opens?\s+(?:the\s+)?(?:registration|login|dashboard|page|screen|window|form)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:if\s+user\s+forgets\s+his\s+password,\s+he\s+will\s+enter\s+his\s+registered\s+email\s+id)\b', clean_text, re.IGNORECASE)
+        ):
+            return True
 
-    # 6. Tender Deposits, EMD, and Bank Guarantee Logistics
+    # 10. Tender Deposits, EMD, and Bank Guarantee Logistics
     if (
         re.search(r'\b(?:online\s+payment\s+of\s+emd|payment\s+of\s+emd|earnest\s+money\s+deposit|bid\s+security\s+deposit|tender\s+fee|cost\s+of\s+tender)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:payment\s+(?:of\s+emd\s+)?by\s+(?:cheque|cash|tdr|fdr|dd|demand\s+draft|rtgs|neft)\s+(?:will|shall|is)\b)', clean_text, re.IGNORECASE)
@@ -483,31 +605,30 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     ):
         return True
 
-    # 7. Form Templates, Spreadsheet Sequences, and Drafting Placeholders
+    # 11. Form Templates, Spreadsheet Sequences, and Drafting Placeholders
     if (
         re.match(r'^\s*(?:\d+\s+){3,}\d*\s*(?:TOTAL|COST|INR|USD|Please\s+add/delete)?', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:please\s+add\s*/\s*delete\s+rows|add/delete\s+rows\s+if\s+required)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:total\s+cost\s+\([a-z0-9]\)\s+inr|total\s+cost\s+\([a-z0-9]\)\s+in\s+words|cost\s+in\s+words:\s*_{3,})\b', clean_text, re.IGNORECASE)
-        or re.search(r'\b(?:define\s+the\s+requirements?\s+here|define/change\s+the\s+procedure\s+as\s+per\s+your\s+state)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:proforma\s+technical\s+proposal|proforma\s+financial\s+proposal)\b', clean_text, re.IGNORECASE)
     ):
         return True
 
-    # 8. Document Titles & Cover Preamble (e.g., "REQUEST FOR PROPOSAL (RFP)", "System Specification & Commercial Requirements Document")
+    # 12. Document Titles & Cover Preamble (e.g., "REQUEST FOR PROPOSAL (RFP)", "System Specification & Commercial Requirements Document")
     if (
         re.search(r'\b(?:REQUEST\s+FOR\s+PROPOSAL|SOLICITATION\s+DOCUMENT|TENDER\s+DOCUMENT|INVITATION\s+TO\s+BID)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:System\s+Specification|Requirements\s+Document|Commercial\s+Requirements\s+Document|Specification\s+Document|Scope\s+of\s+Work|Vendor\s+Commitments)\b', clean_text, re.IGNORECASE)
     ) and not has_obligation_modal:
         return True
 
-    # 9. Table Column Headers
+    # 13. Table Column Headers
     if (
         re.search(r'\b(?:Req\s*ID|Requirement\s*ID|Item\s*#|Clause\s*#|Ref\s*#|S\.?No\.?)\b', clean_text, re.IGNORECASE)
         and re.search(r'\b(?:Category|Specification|Description|Mandatory|Priority|Status|Compliance|Deliverable|Feature)\b', clean_text, re.IGNORECASE)
     ) and not has_obligation_modal:
         return True
 
-    # 10. Vendor Response Instructions & Proposal Answering Meta-Guidelines
+    # 14. Vendor Response Instructions & Proposal Answering Meta-Guidelines
     if (
         re.search(r'\b(?:state\s+(?:their|its)?\s*compliance|indicate\s+(?:their|its)?\s*compliance|confirm\s+(?:their|its)?\s*compliance)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:unsupported\s+claims|cannot\s+be\s+(?:fully\s+)?confirmed|identify\s+the\s+limitation)\b', clean_text, re.IGNORECASE)
@@ -519,19 +640,31 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     ):
         return True
 
-    # 11. Metadata Key-Value Header lines without requirements
+    # 15. Metadata Key-Value Header lines without requirements
     if re.match(r'^(?:DOCUMENT\s+REF|ISSUED\s+BY|DUE\s+DATE|SUBMISSION\s+DEADLINE|CLIENT|PROJECT\s+TITLE|TITLE|AUTHORITY)[\s:\-–—]+[^\n\r]+$', clean_text, re.IGNORECASE) and not has_obligation_modal:
         return True
+
+    # 16. Pre-Bid Conference Logistics & Notice Dissemination
+    if not has_vendor_actor:
+        if (
+            re.search(r'\b(?:pre-bid\s+(?:conference|meeting)|clarification\s+meeting)\s+(?:shall|will)\s+be\s+(?:scheduled|held|conducted|virtual|notified)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:in\s+case\s+of\s+any\s+change\s+in\s+schedule|changed\s+schedule\s+shall\s+be\s+notified\s+through\s+email)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\bqueries\s+(?:received|submitted)\s+after\s+(?:the\s+)?due\s+date\s+(?:for\s+pre-bid|will\s+not\s+be\s+entertained)\b', clean_text, re.IGNORECASE)
+        ):
+            return True
 
     return False
 
 
-def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> List[RawClause]:
+def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> tuple[List[RawClause], int, int]:
     """
     Comprehensive rule-based clause extraction operating across the ENTIRE document.
     Never invents text; preserves source page and section for every clause.
+    Returns (clauses, evaluated_count, filtered_count).
     """
     clauses: List[RawClause] = []
+    evaluated_count = 0
+    filtered_count = 0
     
     # Imperatives & obligation modal verbs
     imperative_pattern = re.compile(
@@ -571,8 +704,11 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> List[RawClause]
 
         is_formal_req_section = (tier == "FORMAL_REQUIREMENTS")
 
+        # Normalize unicode and font bullet characters
+        norm_text = text.replace('\uf0b7', '\n• ').replace('', '\n• ').replace('\r\n', '\n')
+
         # Split block into individual numbered items or bullet points if present
-        lines = [l.strip() for l in text.split("\n") if l.strip()]
+        lines = [l.strip() for l in norm_text.split("\n") if l.strip()]
         
         # Check if block contains distinct numbered or bulleted items
         item_chunks: List[str] = []
@@ -584,17 +720,18 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> List[RawClause]
                 or line.startswith("•")
                 or line.startswith("- ")
                 or line.startswith("* ")
+                or line.startswith("o ")
             )
             if is_item_start and current_chunk:
                 item_chunks.append(" ".join(current_chunk))
-                current_chunk = [line]
+                current_chunk = [re.sub(r'^[•o\-\*]\s*', '', line)]
             else:
                 current_chunk.append(line)
         if current_chunk:
             item_chunks.append(" ".join(current_chunk))
 
         for chunk in item_chunks:
-            chunk_clean = chunk.strip().strip('-*• \t')
+            chunk_clean = chunk.strip().strip('-*•o \t')
             if len(chunk_clean.split()) < 4 or len(chunk_clean) < 20:
                 continue
 
@@ -607,32 +744,35 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> List[RawClause]
                     sub_chunks = split_sents
 
             for sub_c in sub_chunks:
-                if len(sub_c.split()) < 4 or len(sub_c) < 15:
+                clean_clause = sub_c.strip().strip('-*•o \t')
+                if len(clean_clause.split()) < 4 or len(clean_clause) < 15:
                     continue
 
-                if _is_non_requirement_heading_or_criterion(sub_c):
+                evaluated_count += 1
+                if _is_non_requirement_heading_or_criterion(clean_clause):
+                    filtered_count += 1
                     continue
 
                 # General-purpose qualifying conditions:
                 # 1. Contains explicit requirement ID (e.g. REQ-TECH-001)
                 # 2. Contains RFC 2119 obligation modals / imperatives (shall, must, is required to, will provide, agrees to)
                 # 3. Explicitly numbered clause in specifications/deliverables (e.g. 2.1 ...)
-                # 4. Or is in a formal requirement section / table and contains substantive specification text
-                has_explicit_id = bool(re.search(r'\bREQ-[A-Z0-9]+-\d{3,4}\b', sub_c, re.IGNORECASE))
-                has_imperatives = bool(imperative_pattern.search(sub_c))
-                has_numbering = bool(numbered_clause_pattern.match(sub_c))
+                # 4. Or is in a formal requirement/scope section and contains substantive specification text
+                has_explicit_id = bool(re.search(r'\bREQ-[A-Z0-9]+-\d{3,4}\b', clean_clause, re.IGNORECASE))
+                has_imperatives = bool(imperative_pattern.search(clean_clause))
+                has_numbering = bool(numbered_clause_pattern.match(clean_clause))
 
-                if has_explicit_id or has_imperatives or has_numbering or (is_formal_req_section and len(sub_c.split()) >= 6):
+                if has_explicit_id or has_imperatives or has_numbering or (is_formal_req_section and len(clean_clause.split()) >= 6):
                     clauses.append(
                         RawClause(
                             clause_id="",  # Will be assigned canonical sequential ID during deduplication
-                            text=sub_c,
+                            text=clean_clause,
                             source_page=b.page_number,
                             source_section=b.section_title
                         )
                     )
 
-    return clauses
+    return clauses, evaluated_count, filtered_count
 
 
 def _create_block_batches(

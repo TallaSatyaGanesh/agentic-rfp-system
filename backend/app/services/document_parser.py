@@ -78,7 +78,7 @@ class DocumentParserService:
 
                 import re
                 is_section_header = bool(
-                    re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|ANNEXURE|SCHEDULE|ATTACHMENT|EXHIBIT|\d+\.)\s+[A-Za-z0-9\s&,\.\-–—:/()]+$', first_line, re.IGNORECASE)
+                    re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|ANNEXURE|SCHEDULE|ATTACHMENT|EXHIBIT|\d+(?:\.\d+)*\.?)\s+[A-Za-z0-9\s&,\.\-–—:/()]+$', first_line, re.IGNORECASE)
                     or (
                         first_line.isupper() 
                         and 5 <= len(first_line) <= 60 
@@ -102,7 +102,39 @@ class DocumentParserService:
                 )
 
         doc.close()
-        return blocks_out
+
+        # Merge broken paragraph fragments within same page & section
+        import re
+        merged_blocks: List[ExtractedBlock] = []
+        for b in blocks_out:
+            if not merged_blocks:
+                merged_blocks.append(b)
+                continue
+
+            prev = merged_blocks[-1]
+            prev_text = prev.text.rstrip()
+            curr_text = b.text.lstrip()
+
+            starts_with_bullet = bool(re.match(r'^(?:[•o\-\*\uf0b7\uf0a7]|\d+[\.\)]|REQ-)', curr_text))
+            ends_with_terminal = prev_text.endswith(('.', '!', '?', ':', ';')) and not prev_text.endswith(('etc.', 'i.e.', 'e.g.', 'vs.'))
+            ends_with_hyphen = prev_text.endswith(('-', '–', '—'))
+
+            if (
+                prev.page_number == b.page_number
+                and prev.section_title == b.section_title
+                and prev.block_type == "paragraph"
+                and b.block_type == "paragraph"
+                and not starts_with_bullet
+                and (not ends_with_terminal or ends_with_hyphen)
+            ):
+                if ends_with_hyphen:
+                    prev.text = prev_text[:-1] + curr_text
+                else:
+                    prev.text = prev_text + " " + curr_text
+            else:
+                merged_blocks.append(b)
+
+        return merged_blocks
 
     @classmethod
     def _parse_docx(cls, file_path: str) -> List[ExtractedBlock]:

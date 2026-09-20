@@ -171,6 +171,8 @@ def _fallback_classify_batch(clauses: List[Dict[str, Any]]) -> List[ClassifiedRe
 
         # Build crisp normalized statement
         clean_text = re.sub(r'\s+', ' ', text).strip()
+        # Remove leading bullet artifacts
+        clean_text = re.sub(r'^(?:[\u2022\u25cf\u25cb\u25aa\u25ab\uf0b7\uf0a7•*o-]\s*)+', '', clean_text).strip()
         # Remove leading numbering like "2.1 High Availability & SLA:"
         norm_desc = re.sub(r'^(?:(?:\d+\.){1,3}\d*|(?:REQ|SPEC|DELIV|SEC|TECH)[-_:\s])\s*', '', clean_text)
         if len(norm_desc) > 160:
@@ -209,45 +211,45 @@ def _determine_category(text: str, section: str) -> tuple[str, str]:
     sec_lower = section.lower()
 
     # Define category matchers (pattern, category, rationale)
-    # Order of evaluation: Certification -> Contractual -> Commercial -> Delivery -> Documentation -> Submission -> Eligibility -> Administrative
+    # Order of evaluation: Certification -> Eligibility -> Contractual -> Commercial -> Documentation -> Delivery -> Submission -> Administrative
     category_rules = [
         (
-            r'\b(?:iso\s*\d+|soc\s*2|soc2|hipaa|pci[- ]dss|fedramp|fips|gdpr|csa\s*star|certif(?:ication|ied|y)|accredit(?:ation|ed)|attestation|cpa\s+audit|type\s+ii|type\s+2)\b',
+            r'\b(?:iso\s*\d+|soc\s*2|soc2|hipaa|pci[- ]dss|fedramp|fips|gdpr|csa\s*star|cmmi|tier[- ](?:iii|iv)|cert-in|certif[a-z]*|accredit[a-z]*|attestation|cpa\s+audit|type\s+ii|type\s+2)\b',
             "Certification",
             "Clause references mandatory compliance, security standard, or industry certification audit"
         ),
         (
-            r'\b(?:liability|unlimited\s+liability|indemnif|penalty|penalties|warranty|warranties|intellectual\s+property|ip\s+rights|governing\s+law|jurisdiction|breach|liquidated\s+damages|termination\s+for\s+convenience|terms\s+and\s+conditions)\b',
-            "Contractual",
-            "Clause governs legal liability, contractual commitments, warranties, SLA penalties, or indemnification"
-        ),
-        (
-            r'\b(?:pricing|cost|fee|fees|commercial\s+terms|payment\s+schedule|invoic(?:e|ing)|payment\s+terms|milestone\s+payment|budget|discount|hourly\s+rate|fixed\s+price|rates?\s+card|expenses|currency|financial\s+proposal|financial\s+quote|subscription\s+fee|inr|usd)\b',
-            "Commercial",
-            "Clause establishes pricing model, commercial fees, invoicing terms, or payment schedule"
-        ),
-        (
-            r'\b(?:timeline|milestone|schedule|weeks?\s+of\s+contract|concluded\s+within|completed\s+within|delivery\s+date|go[- ]live|deployment\s+schedule|implementation\s+timeline|lead\s+time|shipment|freight|handover|completion\s+date|phase\s+\d+|rollout)\b',
-            "Delivery",
-            "Clause defines implementation timeline, rollout schedule, delivery milestone, or freight handover"
-        ),
-        (
-            r'\b(?:documentation|user\s+manual|architecture\s+diagram|training\s+materials?|runbook|api\s+docs|documented\s+restful|as-built|system\s+guide|specification\s+document|audit\s+trail\s+log|operations\s+manual)\b',
-            "Documentation",
-            "Clause mandates delivery of technical architecture, user manuals, training materials, or API runbooks"
-        ),
-        (
-            r'\b(?:bid\s+submission|submit\s+proposals?|proposals?\s+due|tender\s+box|submission\s+deadline|sealed\s+envelope|portal\s+upload|hard\s+copies|electronic\s+submission|submission\s+instructions|format\s+of\s+proposal|shall\s+submit|must\s+submit|invites\s+proposals)\b',
-            "Submission",
-            "Clause specifies tender submission procedure, deadline, or delivery format"
-        ),
-        (
-            r'\b(?:eligibility|eligible|minimum\s+(?:\d+|five|ten)\s+years|prior\s+experience|past\s+performance|annual\s+turnover|track\s+record|case\s+studies|qualification\s+criteria|authorized\s+partner|licensed\s+to\s+operate|conflict\s+of\s+interest|corporate\s+standing)\b',
+            r'\b(?:eligibility|eligible|minimum\s+(?:\d+|five|ten)\s+years|prior\s+experience|past\s+performance|annual\s+turnover|average\s+turnover|turnover\s+of|track\s+record|case\s+studies|qualification\s+criteria|authorized\s+partner|oem\s+authorization|licensed\s+to\s+operate|conflict\s+of\s+interest|corporate\s+standing|audited\s+balance\s+sheet|blacklisted|debarred|(?:successfully\s+)?executed\s+(?:at\s+least\s+)?\d+\s+similar|similar\s+(?:projects|assignments|works)|experience\s+in\s+executing|registered\s+in\s+india|companies\s+act|llp\s+act|partnership\s+act|in\s+operation\s+for\s+(?:at\s+least\s+)?\d+\s+years|operating\s+for\s+(?:at\s+least\s+)?\d+\s+years|positive\s+net\s*worth|net\s*worth\s+in\s+the\s+last|profitable\s+for|profit\s+making|financial\s+year\s+audited|bidder\s+must\s+be\s+a\s+(?:company|registered|entity)|consortium\s+member|lead\s+bidder)\b',
             "Eligibility",
-            "Clause specifies vendor pre-qualification criteria, past performance case studies, or corporate standing"
+            "Clause specifies vendor pre-qualification criteria, legal company registration, operational vintage, net worth, past performance case studies, or corporate standing"
         ),
         (
-            r'\b(?:administrative|authorized\s+signatory|point\s+of\s+contact|company\s+registration|duns|ein|tin|tax\s+clearance|executive\s+contact|primary\s+liaison|notice\s+address|organizational\s+chart|administrative\s+form|power\s+of\s+attorney)\b',
+            r'\b(?:liability|unlimited\s+liability|indemnif[a-z]*|penalt[a-z]*|liquidated\s+damages|warrant[a-z]*|intellectual\s+property|ip\s+(?:rights|infringement)|governing\s+law|jurisdiction|breach|termination|non[- ]disclosure|nda\b|confidential[a-z]*|in\s+confidence|data\s+shared|performance\s+bank\s+guarantee|pbg\b|bank\s+guarantee|dispute\s+resolution|force\s+majeure|exit\s+management|handover\s+(?:of\s+data|to\s+rcs|upon\s+expiry)|terms\s+and\s+conditions)\b',
+            "Contractual",
+            "Clause governs legal liability, contractual commitments, warranties, SLA penalties, PBG, or indemnification"
+        ),
+        (
+            r'\b(?:pricing|cost|costs|fee|fees|commercial\s+terms|payment\s+schedule|invoic[a-z]*|payment\s+terms|milestone\s+payment|budget|discount|hourly\s+rate|fixed\s+price|rates?\s+card|expenses|currency|financial\s+proposal|financial\s+quote|subscription\s+fee|pro[- ]rata|no\s+(?:extra|additional)\s+cost|free\s+of\s+(?:cost|charge)|at\s+no\s+(?:extra\s+)?cost|taxes|inr\b|usd\b|crores?|lakhs?)\b',
+            "Commercial",
+            "Clause establishes pricing model, commercial fees, invoicing terms, payment schedule, or cost allocation"
+        ),
+        (
+            r'\b(?:documentation|user\s+manuals?|technical\s+manuals?|architecture\s+diagrams?|training\s+materials?|runbooks?|api\s+docs|documented\s+restful|as-built|system\s+guides?|specification\s+documents?|audit\s+trail\s+logs?|operations\s+manuals?|(?:status|sla|performance|availability|compliance|monthly|weekly|daily|regular|on-screen|exportable)\s+reports?|submit\s+(?:all\s+)?(?:the\s+)?reports?|access\s+for\s+report\s+viewing|reports?\s+must\s+be\s+made\s+available|reports?\s+should\s+(?:also\s+)?be\s+available|issues?\s+and\s+resolution\s+log)\b',
+            "Documentation",
+            "Clause mandates delivery of technical architecture, user manuals, training materials, SLA reports, or API runbooks"
+        ),
+        (
+            r'\b(?:training|hands[- ]on\s+training|workshop|timeline|milestone|schedule|weeks?\s+of\s+contract|concluded\s+within|completed\s+within|delivery\s+date|go[- ]live|deployment\s+schedule|implementation\s+timeline|lead\s+time|shipment|freight|project\s+manager\s+nomination|completion\s+date|phase\s+\d+|rollout|user\s+acceptance\s+testing|uat\s+schedule|uat\s+signoff)\b',
+            "Delivery",
+            "Clause defines implementation timeline, training delivery, rollout schedule, delivery milestone, or project staffing"
+        ),
+        (
+            r'\b(?:bid\s+submission|submit\s+proposals?|proposals?\s+due|tender\s+box|submission\s+deadline|sealed\s+envelope|portal\s+upload|e-procurement|hard\s+copies|electronic\s+submission|submission\s+instructions|format\s+of\s+proposal|bids?\s+must\s+be\s+submitted|shall\s+submit|must\s+submit|invites\s+proposals|bid\s+(?:shall|must|should|is\s+to)\s+be\s+submitted|submitted\s+(?:on|via|through|to)\s+(?:email|gem|portal|website)|tender\s+submission|submission\s+of\s+(?:technical|financial|bids?|proposals?)|hard\s+copy\s+submission|(?:upload|submit)\s+(?:[a-z0-9\s,&/–-]+\s+)?(?:on|to|via|through)\s+(?:gem|portal|website|e-procurement)|upload\s+(?:on|to)\s+gem)\b',
+            "Submission",
+            "Clause specifies tender submission procedure, portal upload, email destination, deadline, or delivery format"
+        ),
+        (
+            r'\b(?:administrative|authorized\s+signatory|point\s+of\s+contact|company\s+registration|duns|ein|tin|gst\b|pan\b|tax\s+clearance|executive\s+contact|primary\s+liaison|notice\s+address|organizational\s+chart|administrative\s+form|power\s+of\s+attorney)\b',
             "Administrative",
             "Clause defines administrative vendor details, points of contact, or registration paperwork"
         ),
