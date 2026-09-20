@@ -274,16 +274,22 @@ def test_semantic_category_determination():
         ("Liquidated damages of 0.5% per week of delay shall apply up to a maximum of 10% of contract value.", "Contractual"),
         ("The bidder must submit a Performance Bank Guarantee (PBG) equivalent to 5% of contract value.", "Contractual"),
         ("Warranty Support of ONE Year after successful completion and GO LIVE of application", "Contractual"),
+        ("The successful bidder shall enter into an Agreement with the RCS-<State_Name>, in the format prescribed, within 15 days of being notified to do so.", "Contractual"),
+        ("The Bidder shall be deemed to have complied with all clauses & Annexures in the RFP document under all sections.", "Contractual"),
+        ("The Service Provider shall be legally bound to hand over all the project related documents, data and information upon exit.", "Contractual"),
         # Commercial
         ("Data migration from legacy systems shall be performed at no additional cost to the client.", "Commercial"),
         ("Payments shall be processed on a pro-rata milestone basis upon verification of deliverables.", "Commercial"),
         ("The financial quote must include all applicable taxes, levies, and operational expenses in INR.", "Commercial"),
         ("The Commercial bid shall be on a fixed price basis, inclusive of all taxes and levies at site.", "Commercial"),
+        ("Payment for any broken period shall be made on a pro- rata basis.", "Commercial"),
+        ("All upward revisions of specifications shall be carried out within the lump sum contract price without any impact to the client.", "Commercial"),
         # Delivery
         ("The vendor shall conduct comprehensive classroom and hands-on training for 50 administrative users.", "Delivery"),
         ("Complete platform deployment and UAT signoff must be concluded within 16 weeks of contract signing.", "Delivery"),
         ("The System Integrator will also provide the training/handholding to all the stakeholders.", "Delivery"),
         ("The SI shall also be responsible to provide helpdesk support for the smooth rollout/implementation.", "Delivery"),
+        ("The successful bidder shall nominate a Project manager for the entire period of the contract.", "Delivery"),
         # Documentation
         ("The vendor must deliver weekly status reports, monthly SLA compliance dashboards, and user manuals.", "Documentation"),
         ("Documented RESTful API specifications and database schema runbooks must be submitted prior to go-live.", "Documentation"),
@@ -293,6 +299,11 @@ def test_semantic_category_determination():
         ("Bid shall be submitted on email shared by the RCS office.", "Submission"),
         ("The bidder shall upload the technical and commercial bid on GeM before the closing time.", "Submission"),
         ("Both the proposals must be submitted in separate password protected files (PDF and ZIP) to the email:", "Submission"),
+        ("The bids prepared by the bidder and all correspondence shall be in the English language.", "Submission"),
+        ("There should be no handwritten material, corrections or alterations in the offer.", "Submission"),
+        ("Correct technical information about the product and services being offered must be filled in.", "Submission"),
+        ("Bids of only those Bidders who quote for the complete Scope of Work and Supply of Goods/Services shall be considered.", "Submission"),
+        ("The information provided by the Bidder must be true and correct", "Submission"),
         # Eligibility
         ("The bidder must have an average annual turnover of at least 50 Crores over the last 3 financial years.", "Eligibility"),
         ("The bidder must have successfully executed at least 3 similar enterprise cloud migration projects.", "Eligibility"),
@@ -301,6 +312,7 @@ def test_semantic_category_determination():
         ("The bidder should have been in operation for a period of at least 7 (Seven) years in India at the date of submission of bid.", "Eligibility"),
         ("The Bidder must have experience of Design, Development, implementation / Support and Maintenance of e-governance project with any Government (Central /State/ PSU) department in India during the last Five years as on bid submission date with minimum TWO project worth at-least INR 1 crore each and FOUR Projects each of value 50 Lakh or more.", "Eligibility"),
         ("The Bidder should have a positive net worth in the last financial year.", "Eligibility"),
+        ("The Bidder should have a positive net worth in the last financial year as evidenced by the audited accounts of the company and should be profitable for each of the last three years.", "Eligibility"),
         # Administrative
         ("The proposal must include the name, official address, GST registration, and PAN of the authorized signatory.", "Administrative"),
         # Technical
@@ -312,6 +324,89 @@ def test_semantic_category_determination():
     for clause, expected_cat in category_cases:
         cat, rationale = _determine_category(clause, "General")
         assert cat == expected_cat, f"Expected category '{expected_cat}' for '{clause}', got '{cat}' (Rationale: {rationale})"
+
+
+def test_paired_section_leadin_vs_genuine_requirement_with_leadin_phrase():
+    """Validates exclusion of structural lead-ins while preserving genuine requirements containing lead-in phrases."""
+    lead_ins = [
+        "Following are the deliverables which will be responsibilities of successful vendor.",
+        "The service provider is expected to provide the Server Administration & Management services as follows",
+        "The deliverables and payment milestones are as below.",
+        "The purpose of this Service Level Requirements/agreement (hereinafter referred to as SLA) is to clearly define the levels of service which shall be provided by the vendor to the authority."
+    ]
+    for clause in lead_ins:
+        assert _is_non_requirement_heading_or_criterion(clause), f"Expected structural lead-in '{clause}' to be rejected."
+
+    genuine_requirements = [
+        "The service provider shall provide 24x7 Server Administration service to keep servers stable, reliable and their operation efficient.",
+        "Total project development duration should not exceed 3 months from the date of contract signing.",
+        "The vendor shall maintain minimum 99.5% monthly application uptime as defined in the SLA parameters.",
+        "The contractor shall deliver the software modules as below within 90 days of work order."
+    ]
+    for clause in genuine_requirements:
+        assert not _is_non_requirement_heading_or_criterion(clause), f"Expected genuine requirement '{clause}' to be accepted."
+
+
+def test_paired_template_placeholders_vs_genuine_portal_instructions():
+    """Validates exclusion of template drafting guidance while preserving genuine bidder instructions."""
+    template_placeholders = [
+        "For other procurement methods – The respective States need to define the Bid submission process here.",
+        "Bidder should enclose all documents as the terms and conditions given in the Bid document <States need to give the details of the procurement process here>",
+        "Bid shall be submitted the Bid on < details of procurement portal>",
+        "Bidder should enclose all documents as per NICSI norms OR Procedure & Submission of Bid (GEM)",
+        "Bid shall be submitted the Bid on GeM"
+    ]
+    for clause in template_placeholders:
+        assert _is_non_requirement_heading_or_criterion(clause), f"Expected template placeholder '{clause}' to be rejected."
+
+    genuine_instructions = [
+        "The bidder shall submit the techno-financial proposal to the designated authority email address.",
+        "Bidders must submit proof of all the credentials as required for evaluation of eligibility criteria.",
+        "The bidder should enclose all compliance against each annexure in technical bid."
+    ]
+    for clause in genuine_instructions:
+        assert not _is_non_requirement_heading_or_criterion(clause), f"Expected genuine instruction '{clause}' to be accepted."
+
+
+def test_paired_buyer_payment_policy_vs_vendor_cost_obligation():
+    """Validates exclusion of buyer payment commitments while preserving vendor cost/pricing obligations."""
+    buyer_commitments = [
+        "In case RCS-<State_Name> wishes to procure additional tools or licenses the cost incurred on actual basis will be paid & procured by RCS-<State_Name>.",
+        "Cost incurred on infrastructure upgrades will be borne by the department directly."
+    ]
+    for clause in buyer_commitments:
+        assert _is_non_requirement_heading_or_criterion(clause), f"Expected buyer payment commitment '{clause}' to be rejected."
+
+    vendor_cost_obligations = [
+        "The selected bidder will be responsible for migration of entire data to new service provider without charging RCS-<State_Name> any cost.",
+        "All such upward revisions of specifications shall be carried out within the lump sum contract price without any impact to the RCS-<State_Name>."
+    ]
+    for clause in vendor_cost_obligations:
+        assert not _is_non_requirement_heading_or_criterion(clause), f"Expected vendor cost obligation '{clause}' to be accepted."
+
+
+def test_paired_tender_administrative_rules_vs_bidder_submission_obligations():
+    """Validates exclusion of tender evaluation/rejection meta-rules while preserving bidder obligations."""
+    tender_meta_rules = [
+        "Terms and conditions (General Conditions) of the bidder will not be considered as forming part of their Bids.",
+        "The proposals received after the due date & time will not be considered.",
+        "The offers containing erasures or alterations will not be considered.",
+        "The Bidder shall prepare the bid based on details provided in the RFP documents.",
+        "Deviations from or objections or reservations to critical provisions, such as those concerning Bid security, bid price, eligibility criteria, delivery schedule, SLA, insurance, Force Majeure etc. will be deemed to be a material deviation.",
+        "Proposals not complying with the prescribed ‘Eligibility criteria’ and not submitted along with duly filled up annexures are liable to be rejected and will not be considered for further evaluation"
+    ]
+    for clause in tender_meta_rules:
+        assert _is_non_requirement_heading_or_criterion(clause), f"Expected tender meta rule '{clause}' to be rejected."
+
+    bidder_obligations = [
+        "The bids prepared by the bidder and all correspondence relating to the bids shall be in the English language.",
+        "There should be no handwritten material, corrections or alterations in the offer.",
+        "Bids of only those Bidders who quote for the complete Scope of Work and Supply of Goods/Services shall be considered.",
+        "The information provided by the Bidder must be true and correct",
+        "The bidder should clearly specify deviation in Technical Bid with Form - Statement of Deviations from Bid Terms and conditions."
+    ]
+    for clause in bidder_obligations:
+        assert not _is_non_requirement_heading_or_criterion(clause), f"Expected bidder obligation '{clause}' to be accepted."
 
 
 def test_mandatory_vs_optional_modal_parsing():

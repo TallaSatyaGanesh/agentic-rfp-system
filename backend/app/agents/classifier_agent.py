@@ -224,12 +224,12 @@ def _determine_category(text: str, section: str) -> tuple[str, str]:
             "Clause specifies vendor pre-qualification criteria, legal company registration, operational vintage, net worth, past performance case studies, or corporate standing"
         ),
         (
-            r'\b(?:liability|unlimited\s+liability|indemnif[a-z]*|penalt[a-z]*|liquidated\s+damages|warrant[a-z]*|intellectual\s+property|ip\s+(?:rights|infringement)|governing\s+law|jurisdiction|breach|termination|non[- ]disclosure|nda\b|confidential[a-z]*|in\s+confidence|data\s+shared|performance\s+bank\s+guarantee|pbg\b|bank\s+guarantee|dispute\s+resolution|force\s+majeure|exit\s+management|handover\s+(?:of\s+data|to\s+rcs|upon\s+expiry)|terms\s+and\s+conditions)\b',
+            r'\b(?:liability|unlimited\s+liability|indemnif[a-z]*|penalt[a-z]*|liquidated\s+damages|warrant[a-z]*|intellectual\s+property|ip\s+(?:rights|infringement)|governing\s+law|jurisdiction|breach|termination|non[- ]disclosure|nda\b|confidential[a-z]*|in\s+confidence|data\s+shared|performance\s+bank\s+guarantee|pbg\b|bank\s+guarantee|dispute\s+resolution|force\s+majeure|exit\s+management|handover\s+(?:of\s+data|to\s+rcs|upon\s+expiry)|terms\s+and\s+conditions|enter\s+into\s+an\s+agreement|signing\s+of\s+contract|execution\s+of\s+(?:an\s+)?agreement|legally\s+bound|deemed\s+to\s+have\s+complied|agreement\s+with\s+the\s+(?:rcs|client|buyer|authority|department))\b',
             "Contractual",
-            "Clause governs legal liability, contractual commitments, warranties, SLA penalties, PBG, or indemnification"
+            "Clause governs legal liability, contractual commitments, warranties, SLA penalties, PBG, agreement execution, or indemnification"
         ),
         (
-            r'\b(?:pricing|cost|costs|fee|fees|commercial\s+terms|payment\s+schedule|invoic[a-z]*|payment\s+terms|milestone\s+payment|budget|discount|hourly\s+rate|fixed\s+price|rates?\s+card|expenses|currency|financial\s+proposal|financial\s+quote|subscription\s+fee|pro[- ]rata|no\s+(?:extra|additional)\s+cost|free\s+of\s+(?:cost|charge)|at\s+no\s+(?:extra\s+)?cost|taxes|inr\b|usd\b|crores?|lakhs?)\b',
+            r'\b(?:pricing|cost|costs|fee|fees|commercial\s+terms|payment\s+schedule|invoic[a-z]*|payment\s+terms|milestone\s+payment|budget|discount|hourly\s+rate|fixed\s+prices?|rates?\s+card|expenses|currency|financial\s+proposal|financial\s+quote|subscription\s+fee|pro[- ]\s*rata|no\s+(?:extra|additional)\s+cost|free\s+of\s+(?:cost|charge)|at\s+no\s+(?:extra\s+)?cost|taxes|inr\b|usd\b|crores?|lakhs?|lump\s*sum\s*(?:contract\s*)?price|without\s+any\s+impact|broken\s+period\s+payment)\b',
             "Commercial",
             "Clause establishes pricing model, commercial fees, invoicing terms, payment schedule, or cost allocation"
         ),
@@ -239,14 +239,14 @@ def _determine_category(text: str, section: str) -> tuple[str, str]:
             "Clause mandates delivery of technical architecture, user manuals, training materials, SLA reports, or API runbooks"
         ),
         (
-            r'\b(?:training|hands[- ]on\s+training|workshop|timeline|milestone|schedule|weeks?\s+of\s+contract|concluded\s+within|completed\s+within|delivery\s+date|go[- ]live|deployment\s+schedule|implementation\s+timeline|lead\s+time|shipment|freight|project\s+manager\s+nomination|completion\s+date|phase\s+\d+|rollout|user\s+acceptance\s+testing|uat\s+schedule|uat\s+signoff)\b',
+            r'\b(?:training|hands[- ]on\s+training|workshop|timeline|milestone|schedule|weeks?\s+of\s+contract|concluded\s+within|completed\s+within|delivery\s+date|go[- ]live|deployment\s+schedule|implementation\s+timeline|lead\s+time|shipment|freight|project\s+manager\s+nomination|nominate\s+(?:a\s+)?project\s+manager|key\s+personnel|completion\s+date|phase\s+\d+|rollout|user\s+acceptance\s+testing|uat\s+schedule|uat\s+signoff)\b',
             "Delivery",
             "Clause defines implementation timeline, training delivery, rollout schedule, delivery milestone, or project staffing"
         ),
         (
-            r'\b(?:bid\s+submission|submit\s+proposals?|proposals?\s+due|tender\s+box|submission\s+deadline|sealed\s+envelope|portal\s+upload|e-procurement|hard\s+copies|electronic\s+submission|submission\s+instructions|format\s+of\s+proposal|bids?\s+must\s+be\s+submitted|proposals?\s+(?:must|shall|should)\s+be\s+submitted|shall\s+submit|must\s+submit|invites\s+proposals|bid\s+(?:shall|must|should|is\s+to)\s+be\s+submitted|submitted\s+(?:on|via|through|to)\s+(?:email|gem|portal|website)|tender\s+submission|submission\s+of\s+(?:technical|financial|bids?|proposals?)|hard\s+copy\s+submission|(?:upload|submit)\s+(?:[a-z0-9\s,&/–-]+\s+)?(?:on|to|via|through)\s+(?:gem|portal|website|e-procurement)|upload\s+(?:on|to)\s+gem|must\s+be\s+submitted\s+in\s+separate\s+password\s+protected)\b',
+            r'\b(?:bid\s+submission|submit\s+proposals?|proposals?\s+due|tender\s+box|submission\s+deadline|sealed\s+envelope|portal\s+upload|e-procurement|hard\s+copies|electronic\s+submission|submission\s+instructions|format\s+of\s+proposal|bids?\s+must\s+be\s+submitted|proposals?\s+(?:must|shall|should)\s+be\s+submitted|shall\s+submit|must\s+submit|invites\s+proposals|bid\s+(?:shall|must|should|is\s+to)\s+be\s+submitted|submitted\s+(?:on|via|through|to)\s+(?:email|gem|portal|website)|tender\s+submission|submission\s+of\s+(?:technical|financial|bids?|proposals?)|hard\s+copy\s+submission|(?:upload|submit)\s+(?:[a-z0-9\s,&/–-]+\s+)?(?:on|to|via|through)\s+(?:gem|portal|website|e-procurement)|upload\s+(?:on|to)\s+gem|must\s+be\s+submitted\s+in\s+separate\s+password\s+protected|english\s+language|language\s+of\s+bids?|no\s+handwritten\s+material|erasures\s+or\s+alterations|technical\s+details\s+must\s+be\s+filled|correct\s+technical\s+information\s+about\s+the\s+product|quote\s+for\s+the\s+complete\s+scope|information\s+provided\s+by\s+the\s+bidder\s+must\s+be\s+true)\b',
             "Submission",
-            "Clause specifies tender submission procedure, portal upload, email destination, deadline, or delivery format"
+            "Clause specifies tender submission procedure, proposal language, portal upload, email destination, deadline, or delivery format"
         ),
         (
             r'\b(?:administrative|authorized\s+signatory|point\s+of\s+contact|company\s+registration|duns|ein|tin|gst\b|pan\b|tax\s+clearance|executive\s+contact|primary\s+liaison|notice\s+address|organizational\s+chart|administrative\s+form|power\s+of\s+attorney)\b',

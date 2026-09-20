@@ -422,9 +422,11 @@ def _clean_clause_text(text: str) -> str:
     cleaned = text.strip()
     # Strip leading PDF running page headers e.g. "24 | P a g e", "15 | Page", "Page 24 of 50"
     cleaned = re.sub(r'^\s*\d+\s*\|\s*P\s*a\s*g\s*e\s*', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\b\d+\s*\|\s*P\s*a\s*g\s*e\b', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'^\s*Page\s+\d+(?:\s+of\s+\d+)?\s*[-|:]?\s*', '', cleaned, flags=re.IGNORECASE)
-    # Strip leading bullet/unicode artifacts
-    cleaned = re.sub(r'^(?:[\u2022\u25cf\u25cb\u25aa\u25ab\uf0b7\uf0a7•*o-]\s*)+', '', cleaned)
+    # Strip leading bullet/unicode artifacts (strictly symbols, never ASCII letters like 'o')
+    cleaned = re.sub(r'^(?:[\u2022\u25cf\u25cb\u25ef\u25e6\u2219\u2043\u25aa\u25ab\uf0b7\uf0a7•*\-–—]\s*)+', '', cleaned)
+    cleaned = re.sub(r'^\s*[oO]\s{2,}(?=[A-Z0-9])', '', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned
 
@@ -499,12 +501,13 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     ) and not has_vendor_actor:
         return True
 
-    # Buyer disclaimers, non-representation and non-liability clauses
+    # Buyer payment commitments, disclaimers, non-representation and non-liability clauses
     if (
         re.search(r'\b(?:does\s+not\s+make\s+any\s+representation\s+or\s+warranty|makes?\s+no\s+(?:representation\s+or\s+)?warranty|accepts?\s+no\s+liability\s*(?:for\s+any\s+loss|or\s+responsibility)?|is\s+not\s+an\s+offer\s+by|disclaims?\s+(?:all|any)\s+(?:warranties|liability|responsibility)|shall\s+not\s+be\s+liable\s+for\s+(?:any\s+)?(?:loss|damage)|disclaim\s+all\s+liability)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:neither\s+the\s+(?:client|buyer|authority|rcs|department)\s+nor\s+(?:its|their)\s+employees)\b', clean_text, re.IGNORECASE)
         or re.search(r'\bno\s+binding\s+legal\s+relationship\s+will\s+exist\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:security\s+deposit\s+(?:amount\s+)?will\s+be\s+refunded|refunded\s+to\s+the\s+contractor\s+without\s+interest)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:cost\s+incurred\s+(?:on\s+actual\s+basis\s+)?will\s+be\s+paid\s+&\s+procured\s+by|will\s+be\s+paid\s+&\s+procured\s+by|cost(?:[^\n\r.]+?)?(?:will|shall)\s+be\s+borne\s+by\s+(?:the\s+)?(?:buyer|client|authority|department|rcs))\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:loss\s+or\s+damage\s+arises\s+in\s+connection\s+with\s+any\s+negligence|misrepresentation\s+on\s+the\s+part\s+of)\b', clean_text, re.IGNORECASE)
     ) and not has_vendor_actor:
         return True
@@ -549,14 +552,34 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     ):
         return True
 
-    # 4. Strategic Objectives, Marketing Context & High-Level Purpose Preamble
+    # 4. Strategic Objectives, Marketing Context, Background Preambles & Pure List Lead-Ins
+    # Safeguard 1: Structural lead-ins are excluded ONLY when they contain no concrete requirements or SLA/delivery metrics
+    has_substantive_metrics = bool(re.search(
+        r'\b(?:\d+%\s*uptime|\d+\s*(?:days?|hours?|months?|weeks?|years?|crores?|lakhs?|inr|usd|cmmi|iso)|24\s*x\s*7|api|sso|2fa|rbac|backup|encryption|audit\s+trail|helpdesk|warranty|mtbf|mttr|downtime|penalty)\b',
+        clean_text,
+        re.IGNORECASE
+    ))
+
+    is_pure_structural_leadin = bool(
+        re.search(r'^(?:following\s+are\s+(?:the\s+)?(?:deliverables|services|requirements|modules|responsibilities|milestones)|the\s+service\s+provider\s+is\s+expected\s+to\s+provide\s+[^\n\r.]+?\s+as\s+follows|the\s+deliverables\s+(?:and\s+payment\s+milestones\s+)?are\s+as\s+below|as\s+per\s+the\s+details\s+given\s+below)[:\s.]*$', clean_text, re.IGNORECASE)
+        or (
+            re.search(r'\b(?:is\s+expected\s+to\s+provide\s+[^\n\r.]+?\s+as\s+follows|deliverables\s+which\s+will\s+be\s+responsibilities\s+of\s+successful\s+vendor|milestones\s+are\s+as\s+below|services?\s+as\s+follows)[:\s.]*$', clean_text, re.IGNORECASE)
+            and not has_substantive_metrics
+        )
+    )
+    if is_pure_structural_leadin:
+        return True
+
     if (
         re.search(r'\b(?:following\s+)?(?:strategic\s+)?objectives?\s+(?:will\s+be\s+achieved|are\s+as\s+follows|of\s+the\s+project)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:strategic\s+objectives?\s+will\s+be\s+achieved)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:the\s+above\s+solution\s+is\s+designed\s+with\s+flexibility)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:the\s+vision\s+of\s+this\s+program\s+is|project\s+aims\s+at\s+establishing|over\s+the\s+years,\s+the\s+department)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:scope\s+of\s+engagement\s+encompasses|scope\s+of\s+work\s+(?:includes|encompasses)|following\s+high[- ]level\s+areas)[:\s]*$', clean_text, re.IGNORECASE)
-        or re.search(r'\b(?:the\s+purpose\s+of\s+this\s+(?:service\s+level\s+requirements?/?agreement|sla|document|section)\s+is\s+to\s+clearly\s+define)\b', clean_text, re.IGNORECASE)
+        or (
+            re.search(r'\bthe\s+purpose\s+of\s+this\s+(?:service\s+level\s+[a-z/]+|sla|document|section|agreement|schedule|annexure|rfp)\b[^\n\r.]+?\bis\s+to\s+(?:clearly\s+)?define\b', clean_text, re.IGNORECASE)
+            and not has_substantive_metrics
+        )
         or re.search(r'^(?:first|second|next)\s+(?:[a-z]+|\d+)\s+months?\s+period\s+will\s+come\s+under\s+d-?\d+', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:needs\s+to\s+be\s+done\s+through|including)[:\s]*$', clean_text, re.IGNORECASE)
     ):
@@ -564,7 +587,11 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
 
     # 5. Template Placeholders, Drafting Guides & Proforma Agreements
     if (
-        re.search(r'<(?:define|insert|specify|enter|fill|describe|placeholder|select|mention)\b[^>]*>', clean_text, re.IGNORECASE)
+        re.search(r'<[a-zA-Z0-9_\s\-–—/]+(?:need\s+to|give\s+the\s+details|details\s+of|insert|fill|specify|mention|define|state-specific)[^>]*>', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:for\s+other\s+procurement\s+methods\s*[-–—:]\s*)?(?:the\s+)?(?:respective\s+)?(?:states?|departments?|buyers?|agencies?|authorities?)\s+need\s+to\s+(?:define|give|specify|fill|insert|mention)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:procedure\s+&\s+submission\s+of\s+bid\s+(?:through|by)\s+.*?\s+or\s+by\s+any\s+other\s+state-specific|or\s+procedure\s+&\s+submission\s+of\s+bid)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:bid\s+shall\s+be\s+submitted\s+the\s+bid\s+on\s+<[^>]+>|bid\s+shall\s+be\s+submitted\s+the\s+bid\s+on\s+gem)\b', clean_text, re.IGNORECASE)
+        or re.search(r'<(?:define|insert|specify|enter|fill|describe|placeholder|select|mention)\b[^>]*>', clean_text, re.IGNORECASE)
         or re.search(r'\[(?:please\s+)?(?:attach|define|insert|specify|enter|fill|select|provide|mention)\b[^\]]*\]', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:please\s+attach\s+(?:certified\s+copy|copy\s+of))\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:define\s+the\s+new\s+modules|define/change\s+the\s+procedure|define\s+the\s+requirements?\s+here)\b', clean_text, re.IGNORECASE)
@@ -594,6 +621,7 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         or re.search(r'^(?:role\s+in\s+monitoring\s+the\s+sla\s+compliance\s+by\s+the|and\s+their\s+operation\s+efficient|and\s+its\s+designated\s+agency|management\.)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:contained\s+in\s+this|in\s+connection\s+therewith|based\s+on\s+various\s+conditions\s+like|as\s+follows\s+Sr\.?)\s*$', clean_text, re.IGNORECASE)
         or re.match(r'^(?:with\s+required\s+information\s+and\s+documents|n\s+the\s+rfp\s+document)\b', clean_text, re.IGNORECASE)
+        or re.search(r'^(?:be\s+responsible\s+for\s+delivery\s+of\s+services\s+and\s+act\s+as\s+a\s+primary\s+interface)\b', clean_text, re.IGNORECASE)
         or len(clean_text.split()) < 4
     ):
         return True
@@ -621,6 +649,9 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
             or re.search(r'\b(?:financial|technical|commercial)\s+proposals?\s+(?:[^\n\r.]+?)?\b(?:will|shall)\s+be\s+opened\s+and\s+evaluated\b', clean_text, re.IGNORECASE)
             or re.search(r'\b(?:in\s+the\s+case\s+of\s+a\s+single\s+(?:technically\s+)?qualified\s+bidder|financial\s+proposal\s+of\s+that\s+bidder\s+only\s+will\s+be\s+evaluated)\b', clean_text, re.IGNORECASE)
             or re.search(r'\b(?:proposals?|bidders?)\s+scoring\s+(?:above|below|more\s+than|at\s+least|less\s+than)?\s*\d+%', clean_text, re.IGNORECASE)
+            or re.search(r'\bdeviations?\s+from\s+or\s+objections?\s+or\s+reservations?\s+to\s+critical\s+provisions\b', clean_text, re.IGNORECASE)
+            or re.search(r'\bwill\s+be\s+deemed\s+to\s+be\s+a\s+material\s+deviation\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:proposals?\s+not\s+complying\s+with\s+(?:the\s+)?prescribed\s+[‘\'"]?eligibility\s+criteria[’\'"]?\s+and\s+not\s+submitted\s+along\s+with\s+duly\s+filled\s+up\s+annexures\s+are\s+liable\s+to\s+be\s+rejected)\b', clean_text, re.IGNORECASE)
             or re.search(r'\(\s*\d+%\s*\)', clean_text)
             or re.search(r'\b\d+\s*marks\b', clean_text, re.IGNORECASE)
             or re.search(r'\b(?:only\s+)?(?:one|single)\s+bidder\s+(?:will|shall)\s+be\s+selected\b', clean_text, re.IGNORECASE)
@@ -649,6 +680,8 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
             or re.search(r'\bthe\s+process\s+(?:for|of)\s+(?:filing\s+annual\s+returns|raising\s+an\s+appeal|user\s+registration)\b', clean_text, re.IGNORECASE)
             or re.search(r'\bcooperative\s+soci[a-z]+\s+must\s+(?:also\s+)?conduct\s+an\s+annual\s+general\s+meeting\b', clean_text, re.IGNORECASE)
             or re.search(r'\ball\s+states/uts\s+rcs\s+are\s+required\s+to\s+write\s+in\s+detail\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:the\s+)?system\s+will\s+display\s+relevant\s+fields\s+in\s+the\s+form\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:it\s+will\s+also\s+)?request\s+the\s+user\s+to\s+upload\s+relevant\s+annexures\s+&\s+documents\b', clean_text, re.IGNORECASE)
             or re.search(r'\b(?:system|portal)\s+opens?\s+(?:the\s+)?(?:registration|login|dashboard|page|screen|window|form)\b', clean_text, re.IGNORECASE)
         ):
             return True
@@ -687,7 +720,11 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
 
     # 14. Vendor Response Instructions & Proposal Answering Meta-Guidelines
     if (
-        re.search(r'\b(?:state\s+(?:their|its)?\s*compliance|indicate\s+(?:their|its)?\s*compliance|confirm\s+(?:their|its)?\s*compliance)\b', clean_text, re.IGNORECASE)
+        re.search(r'\bterms\s+and\s+conditions\s+(?:\(general\s+conditions\)\s+)?of\s+the\s+bidder\s+will\s+not\s+be\s+considered\b', clean_text, re.IGNORECASE)
+        or re.search(r'\bproposals?\s+received\s+after\s+the\s+due\s+date\s+(?:&\s*time|\band\s+time)?\s+will\s+not\s+be\s+considered\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:the\s+)?offers?\s+containing\s+erasures\s+or\s+alterations\s+will\s+not\s+be\s+considered\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:the\s+)?bidder\s+shall\s+prepare\s+the\s+bid\s+based\s+on\s+details\s+provided\s+in\s+the\s+rfp\s+documents?\.?\s*$', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:state\s+(?:their|its)?\s*compliance|indicate\s+(?:their|its)?\s*compliance|confirm\s+(?:their|its)?\s*compliance)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:unsupported\s+claims|cannot\s+be\s+(?:fully\s+)?confirmed|identify\s+the\s+limitation)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:respond\s+to\s+(?:each|this|every)\s+requirement|address\s+(?:each|all)\s+requirements?\s+in\s+(?:the|their|its)\s+proposal)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:format\s+(?:their|its|the)\s+response|complete\s+(?:the|this)\s+compliance\s+(?:matrix|table))\b', clean_text, re.IGNORECASE)
@@ -716,12 +753,144 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     return False
 
 
+def _is_heading_or_structural_block(block: ExtractedBlock) -> bool:
+    """
+    Identifies if a block is a section heading, document title, or table header.
+    Structural blocks must never be stitched into body paragraphs or other blocks.
+    """
+    if block.block_type in ("heading", "title", "table_header", "table"):
+        return True
+
+    text = block.text.strip()
+    if not text:
+        return True
+
+    # Matches numbered section titles e.g. "1. Purpose", "2. Scope of Work", "Section 3: Technical Specs", "Chapter 4"
+    if re.match(r'^(?:(?:\d{1,2}\.){1,3}\d{0,2}\s+[A-Z]|(?:Section|Chapter|Annexure|Appendix|Schedule|Part|Module)\s+(?:\d+|[A-ZIVX]+)[\s:\-–—])', text, re.IGNORECASE):
+        return True
+
+    # Matches standard document headers/titles
+    if re.match(r'^(?:REQUEST\s+FOR\s+PROPOSAL|SOLICITATION\s+DOCUMENT|TENDER\s+DOCUMENT|INVITATION\s+TO\s+BID|TABLE\s+OF\s+CONTENTS|SCOPE\s+OF\s+WORK|COMMERCIAL\s+PROPOSAL|TECHNICAL\s+PROPOSAL)(?:\s*[\-–—:\(].*)?$', text, re.IGNORECASE):
+        return True
+
+    # Matches table header line e.g. "Req ID Category Requirement Specification Mandatory" or "Sl. No. Parameter Minimum Specification"
+    if (
+        re.search(r'\b(?:Req\s*ID|Requirement\s*ID|Item\s*#|Clause\s*#|Ref\s*#|Sl\.?\s*No\.?)\b', text, re.IGNORECASE)
+        and re.search(r'\b(?:Category|Specification|Description|Mandatory|Priority|Status|Compliance|Deliverable|Feature)\b', text, re.IGNORECASE)
+    ):
+        return True
+
+    # Short header line without trailing punctuation (< 80 chars, single line, no modal verbs like shall/must/will/requires)
+    if len(text) < 80 and '\n' not in text and not text.endswith(('.', '!', '?', ';', ':', ',"', '."', '?"', '!"', '.)', '!)')):
+        if not re.search(r'\b(?:shall|must|will|should|is\s+required|are\s+required|agrees?\s+to)\b', text, re.IGNORECASE):
+            return True
+
+    return False
+
+
+def _stitch_blocks(blocks: List[ExtractedBlock]) -> List[ExtractedBlock]:
+    """
+    Safeguard 2: Stitches sequential blocks when a clause was split across block/page boundaries.
+    Reconstructs wrapped sentences BEFORE final semantic filtering and classification.
+    """
+    if not blocks:
+        return []
+
+    stitched: List[ExtractedBlock] = []
+    
+    header_pattern = re.compile(r'^\s*(?:\d+\s*\|\s*P\s*a\s*g\s*e|P\s*a\s*g\s*e\s*\|\s*\d+)\s*', re.IGNORECASE)
+    bullet_start_pattern = re.compile(
+        r'^\s*(?:[•\-\*\uf0b7–—\u25cb\u25ef\u25e6\u2022\u2219\u2043]|\([0-9a-zA-Z]\)|(?:\d{1,2}\.){1,3}\d{1,2}|\d{1,2}[\.\)]|[a-zA-Z][\.\)]|[oO]\s{2,}(?=[A-Z0-9])|(?:REQ|SECTION|CHAPTER|ANNEXURE|APPENDIX|PART|SCHEDULE|MODULE)\b)\s+',
+        re.IGNORECASE
+    )
+    
+    sentence_end_chars = ('.', '!', '?', ';', ':', '."', '?”', '!”', ';"', '.)', '!)')
+    dangling_trailing_regex = re.compile(
+        r'\b(?:of|to|with|and|or|in|for|as|by|the|a|an|from|at|under|into|per|such\s+as|including|between|against|without|on|about|is|are|shall|must|will|should|be|have|has|their|its|which|that|who|whom|whose|within|during|before|after|over|with\s+["“][^"”]*)\s*$',
+        re.IGNORECASE
+    )
+
+    i = 0
+    while i < len(blocks):
+        curr = blocks[i]
+        curr_text = curr.text.strip()
+        curr_text = header_pattern.sub('', curr_text).strip()
+
+        if _is_heading_or_structural_block(curr):
+            stitched.append(curr)
+            i += 1
+            continue
+
+        while i + 1 < len(blocks):
+            next_b = blocks[i + 1]
+            if _is_heading_or_structural_block(next_b):
+                break
+
+            next_text = next_b.text.strip()
+            next_text_cleaned = header_pattern.sub('', next_text).strip()
+            
+            if not next_text_cleaned:
+                i += 1
+                continue
+
+            next_is_new_item = bool(bullet_start_pattern.match(next_text_cleaned))
+            if next_is_new_item:
+                break
+
+            curr_ends_sentence = curr_text.endswith(sentence_end_chars)
+            ends_in_dangling = bool(dangling_trailing_regex.search(curr_text))
+
+            first_char = next_text_cleaned[0] if next_text_cleaned else ''
+            next_starts_continuation = first_char.islower() or first_char in (',', '.', ';', ':', ')', ']', '}', '"', '”', '’')
+
+            should_stitch = False
+            if ends_in_dangling:
+                should_stitch = True
+            elif not curr_ends_sentence and next_starts_continuation:
+                should_stitch = True
+
+            if should_stitch:
+                lines = next_text_cleaned.split('\n')
+                first_line = lines[0].strip()
+                rest_lines = lines[1:]
+                
+                curr_text = curr_text + " " + first_line
+                
+                if rest_lines:
+                    blocks[i + 1] = ExtractedBlock(
+                        text="\n".join(rest_lines),
+                        page_number=next_b.page_number,
+                        section_title=next_b.section_title,
+                        block_type=next_b.block_type
+                    )
+                    break
+                else:
+                    i += 1
+            else:
+                break
+
+        stitched.append(
+            ExtractedBlock(
+                text=curr_text,
+                page_number=curr.page_number,
+                section_title=curr.section_title,
+                block_type=curr.block_type
+            )
+        )
+        i += 1
+
+    return stitched
+
+
 def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> tuple[List[RawClause], int, int]:
     """
     Comprehensive rule-based clause extraction operating across the ENTIRE document.
     Never invents text; preserves source page and section for every clause.
     Returns (clauses, evaluated_count, filtered_count).
     """
+    # Safeguard 2: Reconstruct wrapped/fragmented blocks across page boundaries first
+    blocks = _stitch_blocks(blocks)
+
     clauses: List[RawClause] = []
     evaluated_count = 0
     filtered_count = 0
@@ -734,8 +903,12 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> tuple[List[RawC
 
     # Numbered clause headers e.g. "2.1 High Availability:", "REQ-01:", "3.2.1"
     numbered_clause_pattern = re.compile(
-        r'^\s*(?:(?:\d+\.){1,3}\d*\s+(?=[A-Z])|(?:\d+\))\s+|[A-Z]\.\s+(?=[A-Z])|(?:REQ|RFP|SPEC|DELIV|SEC|TECH|FUNC|LEGAL|SLA)[-_:\s])',
+        r'^\s*(?:(?:\d{1,2}\.){1,3}\d{1,2}|\d{1,2}[\.\)]|[A-Z]\.\s+(?=[A-Z])|(?:REQ|RFP|SPEC|DELIV|SEC|TECH|FUNC|LEGAL|SLA)[-_:\s])',
         re.IGNORECASE
+    )
+
+    bullet_start_pattern = re.compile(
+        r'^\s*(?:[•\-\*\uf0b7–—\u25cb\u25ef\u25e6\u2022\u2219\u2043]|\([0-9a-zA-Z]\)|\d{1,2}(?:\.\d{1,2}){0,3}[\.\)]|[a-zA-Z][\.\)]|[oO]\s{2,}(?=[A-Z0-9]))\s+'
     )
 
     for b in blocks:
@@ -775,16 +948,13 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> tuple[List[RawC
         current_chunk: List[str] = []
 
         for line in lines:
-            is_item_start = (
+            is_item_start = bool(
                 numbered_clause_pattern.match(line)
-                or line.startswith("•")
-                or line.startswith("- ")
-                or line.startswith("* ")
-                or line.startswith("o ")
+                or bullet_start_pattern.match(line)
             )
             if is_item_start and current_chunk:
                 item_chunks.append(" ".join(current_chunk))
-                current_chunk = [re.sub(r'^[•o\-\*]\s*', '', line)]
+                current_chunk = [re.sub(r'^\s*(?:[•\-\*\uf0b7–—\u25cb\u25ef\u25e6\u2022\u2219\u2043]|\([0-9a-zA-Z]\)|\d{1,2}(?:\.\d{1,2}){0,3}[\.\)]|[a-zA-Z][\.\)]|[oO]\s{2,})\s*', '', line)]
             else:
                 current_chunk.append(line)
         if current_chunk:
