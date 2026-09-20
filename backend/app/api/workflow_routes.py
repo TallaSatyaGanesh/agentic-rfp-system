@@ -10,6 +10,7 @@ from app.db.models import RFPDocument, Requirement, ComplianceRecord, RiskRecord
 from app.agents.graph import rfp_graph, checkpointer
 from app.agents.state import RFPProposalState
 from app.models.schemas import GoNoGoRequest, FinalApprovalRequest
+from app.services.storage_service import StorageService
 
 router = APIRouter(prefix="/api/workflow", tags=["Workflow Execution & HITL"])
 
@@ -282,18 +283,23 @@ async def start_workflow(
         raise HTTPException(status_code=404, detail="RFP not found")
 
     import os
-    if not rfp.file_path or not os.path.exists(rfp.file_path):
+    local_file = StorageService.ensure_local_file(rfp.file_path, rfp.id, rfp.filename)
+    if not local_file or not os.path.exists(local_file):
         rfp.status = "FAILED"
         db.commit()
         raise HTTPException(
             status_code=400,
-            detail=f"Document file not found at {rfp.file_path or 'unknown location'}"
+            detail=f"Document file not found at {rfp.file_path or 'unknown location'} and could not be recovered from storage."
         )
+
+    if local_file != rfp.file_path:
+        rfp.file_path = local_file
+        db.commit()
 
     rfp.status = "PROCESSING"
     db.commit()
 
-    background_tasks.add_task(run_workflow_async, rfp_id, rfp.file_path)
+    background_tasks.add_task(run_workflow_async, rfp_id, local_file)
     return {"message": "Workflow started successfully", "rfp_id": rfp_id}
 
 @router.get("/{rfp_id}/status")

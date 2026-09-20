@@ -10,6 +10,7 @@ from app.db.models import RFPDocument, Requirement, ComplianceRecord, RiskRecord
 from app.models.schemas import RFPUploadResponse
 from app.services.document_parser import DocumentParserService
 from app.services.exporter import ProposalExporterService
+from app.services.storage_service import StorageService
 from app.core.config import settings
 
 router = APIRouter(prefix="/api/rfp", tags=["RFP Documents"])
@@ -27,14 +28,12 @@ async def upload_rfp(
         raise HTTPException(status_code=400, detail="Only PDF, DOCX, and TXT files are supported.")
 
     rfp_id = f"rfp_{uuid.uuid4().hex[:10]}"
-    upload_dir = os.path.join(settings.UPLOAD_DIR, "rfp", rfp_id)
-    os.makedirs(upload_dir, exist_ok=True)
+    file_bytes = await file.read()
     
-    file_path = os.path.join(upload_dir, file.filename)
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    # Save locally and sync to Supabase Storage if configured
+    file_path = StorageService.upload_rfp_document(rfp_id, file.filename, file_bytes)
 
-    file_size = os.path.getsize(file_path)
+    file_size = len(file_bytes)
     page_count = DocumentParserService.get_page_count(file_path)
     title = os.path.splitext(file.filename)[0].replace("_", " ").title()
 
@@ -235,6 +234,14 @@ def export_proposal(rfp_id: str, export_format: str, db: Session = Depends(get_d
             clarifications=clarifications,
             output_path=out_path
         )
+
+        # Archive to Supabase Storage if configured
+        if os.path.exists(out_path):
+            try:
+                with open(out_path, "rb") as f:
+                    StorageService.archive_proposal_export(out_filename, f.read())
+            except Exception as e:
+                pass
 
         return FileResponse(
             path=out_path,

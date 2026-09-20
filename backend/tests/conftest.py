@@ -14,14 +14,16 @@ import app.db.database as db_module
 import app.api.workflow_routes as wf_routes
 from app.main import app
 from app.db.database import Base, get_db
+from app.core.config import settings
+from app.rag.vector_store import VectorStoreManager
 
 
 @pytest.fixture(scope="session", autouse=True)
 def isolate_test_database():
     """
-    Creates an isolated temporary SQLite database for the entire test session,
-    ensuring that the runtime database (backend/storage/rfp_system.db) is
-    NEVER read or modified during automated test runs.
+    Creates an isolated temporary SQLite database and ChromaDB vector store
+    for the entire test session, ensuring that the runtime database and vector indices
+    are NEVER read, locked, or modified during automated test runs.
     """
     temp_dir = tempfile.mkdtemp(prefix="rfp_test_db_")
     test_db_path = os.path.join(temp_dir, "isolated_test_rfp.db")
@@ -37,6 +39,14 @@ def isolate_test_database():
     orig_engine = db_module.engine
     orig_session_local = db_module.SessionLocal
     orig_wf_session_local = getattr(wf_routes, "SessionLocal", None)
+    orig_chroma_dir = settings.CHROMA_PERSIST_DIRECTORY
+
+    # Isolate ChromaDB
+    chroma_temp_dir = tempfile.mkdtemp(prefix="rfp_chroma_test_")
+    settings.CHROMA_PERSIST_DIRECTORY = chroma_temp_dir
+    VectorStoreManager._instance = None
+    VectorStoreManager._client = None
+    VectorStoreManager._collection = None
 
     # Patch global engine and SessionLocal
     db_module.engine = test_engine
@@ -69,6 +79,10 @@ def isolate_test_database():
     # Restore original references
     db_module.engine = orig_engine
     db_module.SessionLocal = orig_session_local
+    settings.CHROMA_PERSIST_DIRECTORY = orig_chroma_dir
+    VectorStoreManager._instance = None
+    VectorStoreManager._client = None
+    VectorStoreManager._collection = None
     if orig_wf_session_local is not None:
         wf_routes.SessionLocal = orig_wf_session_local
 

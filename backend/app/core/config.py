@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = str(STORAGE_DIR / "uploads")
     EXPORT_DIR: str = str(STORAGE_DIR / "exports")
     
+    # Optional Supabase Remote Persistence
+    SUPABASE_URL: str = Field(default="")
+    SUPABASE_KEY: str = Field(default="")
+    SUPABASE_STORAGE_BUCKET: str = Field(default="rfp-documents")
+    
     # RAG and Agent Limits
     SIMILARITY_THRESHOLD: float = 0.35
     RAG_TOP_K: int = 4
