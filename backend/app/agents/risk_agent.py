@@ -15,6 +15,35 @@ HARSH_CONTRACT_PATTERNS = re.compile(
     re.IGNORECASE
 )
 
+# Financial performance security and bank guarantee patterns
+PERFORMANCE_SECURITY_PATTERNS = re.compile(
+    r'\b(?:performance\s+security|performance\s+bank\s+guarantee|security\s+deposit|'
+    r'performance\s+guarantee|pbg\b|earnest\s+money\s+deposit|emd\b)\b',
+    re.IGNORECASE
+)
+
+# Serious technical security obligations and strict quantified SLA patterns
+SERIOUS_TECH_SECURITY_OR_SLA_PATTERNS = re.compile(
+    r'\b(?:two[- ]factor\s+authentication|2fa\b|multi[- ]factor\s+authentication|mfa\b|'
+    r'end[- ]to[- ]end\s+encryption|encrypt(?:ed|ion)?\s+(?:sensitive\s+information\s+)?at\s+rest|'
+    r'aes[- ]256|tls\s*1\.[23]|fips\s*140|'
+    r'disaster\s+recovery|rto\b|rpo\b|business\s+continuity|active[- ]active\s+clustering|'
+    r'security\s+incident\s+(?:notification|reporting|affecting)\s+within\s+(?:24|12|4|2|1)\s+hours?|'
+    r'breach\s+notification|uptime\s+of\s+at\s+least\s+99\.[5-9]|availability\s+of\s+at\s+least\s+99\.[5-9]|'
+    r'99\.[5-9]%\s+(?:monthly\s+)?availability|incident\s+response\s+within\s+(?:15|30|60)\s+minutes?|'
+    r'critical\s+production\s+incidents?\s+shall\s+receive|sla\s+penalt(?:y|ies))\b',
+    re.IGNORECASE
+)
+
+# Moderate operational or contractual impact patterns
+MODERATE_OPERATIONAL_IMPACT_PATTERNS = re.compile(
+    r'\b(?:data\s+migration|migrate\s+.*?\s+data|backup\s+and\s+recovery|audit\s+trail|'
+    r'rest\s+apis?|api\s+integration|confidentiality|non[- ]disclosure|patient[- ]related\s+information|'
+    r'within\s+\d+\s*(?:weeks?|months?)\s+(?:from|of|after)\s+(?:contract|award|commencement)|'
+    r'deployment\s+within\s+\d+\s*(?:weeks?|months?))\b',
+    re.IGNORECASE
+)
+
 # Negative assertion patterns to sanitize on INFORMATION_REQUIRED
 ASSERTED_FAILURE_PATTERNS = re.compile(
     r'\b(?:company\s+(?:does\s+not|doesn\'t|lacks|fails\s+to|does\s+not\s+have|has\s+no|cannot)|'
@@ -155,37 +184,53 @@ def _calibrate_risk_severity(
 ) -> str:
     """
     Calibrates risk severity based on deterministic enterprise rules:
-    - Mandatory + NON_COMPLIANT -> CRITICAL when the failure is a genuine bid/deal-breaker.
-    - Mandatory + INFORMATION_REQUIRED -> HIGH by default.
-      May become CRITICAL ONLY if the RFP itself explicitly establishes that absence of that
-      specification/certification makes the bidder ineligible/disqualified.
-      Missing company evidence alone must NEVER be treated as proof that the company lacks
-      the certification and must NOT be assigned CRITICAL merely because evidence is missing.
-    - Mandatory + PARTIALLY_COMPLIANT -> HIGH by default.
+    - Mandatory + NON_COMPLIANT -> CRITICAL when the failure is a genuine bid/deal-breaker, else HIGH/MEDIUM.
+    - Mandatory + INFORMATION_REQUIRED:
+      - Explicit disqualification condition / bid blocker -> CRITICAL
+      - Mandatory Certification / Statutory Eligibility -> HIGH
+      - Harsh contractual liability / Performance Security (PBG) -> HIGH
+      - Serious security obligation / strict quantified SLA -> HIGH
+      - Moderate operational impact / contract covenants -> MEDIUM
+      - Ordinary functional / documentation / delivery capability gap -> LOW
     - Optional requirements -> MEDIUM or LOW.
     """
     has_harsh_legal = bool(HARSH_CONTRACT_PATTERNS.search(req_text))
     has_disqualifying_language = bool(BID_BLOCKING_DISQUALIFY_PATTERNS.search(req_text))
+    has_perf_security = bool(PERFORMANCE_SECURITY_PATTERNS.search(req_text))
+    has_serious_security_or_sla = bool(SERIOUS_TECH_SECURITY_OR_SLA_PATTERNS.search(req_text))
+    has_moderate_impact = bool(MODERATE_OPERATIONAL_IMPACT_PATTERNS.search(req_text))
 
     if status == "NON_COMPLIANT":
-        if is_mandatory or category in ["Eligibility", "Certification", "Legal", "Contractual"]:
+        if has_disqualifying_language or (is_mandatory and (has_harsh_legal or category in ["Eligibility", "Certification"])):
             return "CRITICAL"
+        if is_mandatory or category in ["Legal", "Contractual", "Delivery"]:
+            return "HIGH"
         return "MEDIUM"
 
     if status == "INFORMATION_REQUIRED":
+        # 1. Truly critical / bid-blocking condition
+        if has_disqualifying_language and is_mandatory:
+            return "CRITICAL"
+        
+        # 2. High severity: Statutory pre-qualification, harsh liabilities, PBG, serious security/SLA
         if is_mandatory:
-            if has_disqualifying_language:
-                return "CRITICAL"
-            return "HIGH"
+            if category in ["Eligibility", "Certification"] or has_harsh_legal or has_perf_security or has_serious_security_or_sla:
+                return "HIGH"
+            if category in ["Contractual", "Legal"] or has_moderate_impact:
+                return "MEDIUM"
+            return "LOW"
         else:
+            # Optional requirement with missing evidence
             if has_harsh_legal or category in ["Eligibility", "Certification"]:
                 return "MEDIUM"
             return "LOW"
 
     if status == "PARTIALLY_COMPLIANT":
-        if is_mandatory:
+        if is_mandatory and (has_disqualifying_language or has_harsh_legal or category in ["Eligibility", "Certification"] or has_serious_security_or_sla):
             return "HIGH"
-        return "MEDIUM"
+        if is_mandatory:
+            return "MEDIUM"
+        return "LOW"
 
     # COMPLIANT
     if has_harsh_legal:
@@ -200,7 +245,7 @@ def _calibrate_risk_severity(
                 return "MEDIUM"
             # Ensure INFORMATION_REQUIRED without explicit disqualifying language isn't inflated to CRITICAL
             if status == "INFORMATION_REQUIRED" and upper == "CRITICAL" and not has_disqualifying_language:
-                return "HIGH"
+                return "HIGH" if (category in ["Eligibility", "Certification"] or has_perf_security or has_serious_security_or_sla) else "MEDIUM"
             return upper
 
     return "LOW"
@@ -521,31 +566,47 @@ def _fallback_risk_analysis(
             )
 
         elif status == "INFORMATION_REQUIRED":
-            # Generate risk if mandatory OR if critical category
-            if is_mandatory or category in ["Certification", "Eligibility", "Legal", "Contractual"]:
-                is_disqualifying = bool(BID_BLOCKING_DISQUALIFY_PATTERNS.search(req_text))
-                severity = "CRITICAL" if (is_mandatory and is_disqualifying) else ("HIGH" if is_mandatory else "MEDIUM")
-                risk_to_add = RiskItem(
-                    risk_id=f"RISK-{req_code}",
-                    id=f"RISK-{req_code}",
-                    requirement_id=req_code,
-                    requirement_text=req_text,
-                    category=category,
-                    severity=severity,
-                    likelihood="High",
-                    title=f"Unverified Capability Gap: {category} ({req_code})",
-                    description=f"Verification data is currently missing from company collateral for {req_code}: '{req_text[:140]}'. Capability status could not be verified from available evidence.",
-                    impact="Risk of submitting unsubstantiated claims or receiving disqualification for unproven mandatory specifications.",
-                    mitigation_strategy="Conduct priority discovery with technical and compliance leads to obtain verified proof prior to proposal submission.",
-                    recommended_action="Obtain verified documentation from internal capability owners.",
-                    compliance_status=status,
-                    rfp_reference=f"{req_code} (p. {source_page}, § {source_section})",
-                    company_doc_id=None,
-                    chunk_id=None,
-                    source_page=source_page,
-                    source_section=source_section,
-                    citations=[]
-                )
+            # Calibrate severity using general-purpose semantic rules
+            severity = _calibrate_risk_severity(
+                raw_severity=None,
+                status=status,
+                is_mandatory=is_mandatory,
+                category=category,
+                req_text=req_text
+            )
+
+            # Likelihood and impact calibrated to risk severity
+            if severity in ["CRITICAL", "HIGH"]:
+                likelihood = "High"
+                impact = "Risk of bid disqualification, non-responsiveness, or severe compliance penalty if required verification cannot be established."
+            elif severity == "MEDIUM":
+                likelihood = "Medium"
+                impact = "Potential proposal scoring deduction, operational misalignment, or clarification delay if unverified before submission."
+            else:
+                likelihood = "Low"
+                impact = "Routine capability discovery item. Low proposal risk provided standard capability is confirmed during internal review."
+
+            risk_to_add = RiskItem(
+                risk_id=f"RISK-{req_code}",
+                id=f"RISK-{req_code}",
+                requirement_id=req_code,
+                requirement_text=req_text,
+                category=category,
+                severity=severity,
+                likelihood=likelihood,
+                title=f"Unverified Capability Gap: {category} ({req_code})",
+                description=f"Verification data is currently missing from company collateral for {req_code}: '{req_text[:140]}'. Capability status could not be verified from available evidence.",
+                impact=impact,
+                mitigation_strategy="Conduct priority discovery with technical and compliance leads to obtain verified proof prior to proposal submission.",
+                recommended_action="Obtain verified documentation from internal capability owners.",
+                compliance_status=status,
+                rfp_reference=f"{req_code} (p. {source_page}, § {source_section})",
+                company_doc_id=None,
+                chunk_id=None,
+                source_page=source_page,
+                source_section=source_section,
+                citations=[]
+            )
 
         elif has_harsh_legal:
             # COMPLIANT requirement with harsh legal trap

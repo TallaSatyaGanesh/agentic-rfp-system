@@ -788,3 +788,176 @@ def test_non_compliant_exception_clarification_type():
     assert "alternative" in c["question_text"].lower() or "exception" in c["question_text"].lower() or "clarify" in c["question_text"].lower()
     assert "company supports" not in c["question_text"].lower()
 
+
+# ==============================================================================
+# CALIBRATED RISK SEVERITY REGRESSION TESTS
+# ==============================================================================
+
+def test_unverified_normal_technical_requirement_is_not_high_risk():
+    """Verifies that an unverified ordinary technical requirement does NOT automatically become HIGH risk."""
+    sev = _calibrate_risk_severity(
+        raw_severity=None,
+        status="INFORMATION_REQUIRED",
+        is_mandatory=True,
+        category="Technical",
+        req_text="The proposed platform shall provide a web-based appointment management application accessible through Chrome, Edge and Firefox."
+    )
+    assert sev in ["LOW", "MEDIUM"], f"Expected LOW/MEDIUM for ordinary technical web app, got {sev}"
+
+
+def test_unverified_ordinary_documentation_and_delivery_not_high_risk():
+    """Verifies that unverified ordinary documentation and training requirements do not become HIGH risk."""
+    sev_doc = _calibrate_risk_severity(
+        raw_severity=None,
+        status="INFORMATION_REQUIRED",
+        is_mandatory=True,
+        category="Documentation",
+        req_text="The vendor shall provide a monthly service report covering availability, incidents and support performance."
+    )
+    assert sev_doc in ["LOW", "MEDIUM"], f"Expected LOW/MEDIUM for periodic service report, got {sev_doc}"
+
+    sev_deliv = _calibrate_risk_severity(
+        raw_severity=None,
+        status="INFORMATION_REQUIRED",
+        is_mandatory=True,
+        category="Delivery",
+        req_text="The vendor shall conduct administrator and clinic-staff training before production deployment."
+    )
+    assert sev_deliv in ["LOW", "MEDIUM"], f"Expected LOW/MEDIUM for ordinary staff training, got {sev_deliv}"
+
+
+def test_unverified_mandatory_iso_certification_remains_high_risk():
+    """Verifies that an unverified mandatory ISO/security certification requirement remains HIGH risk."""
+    sev = _calibrate_risk_severity(
+        raw_severity=None,
+        status="INFORMATION_REQUIRED",
+        is_mandatory=True,
+        category="Certification",
+        req_text="The bidder must provide evidence of ISO 27001 or an equivalent recognized information-security certification."
+    )
+    assert sev == "HIGH", f"Expected HIGH for mandatory ISO certification, got {sev}"
+
+
+def test_unverified_eligibility_threshold_remains_high_risk():
+    """Verifies that unverified mandatory eligibility criteria remain HIGH risk."""
+    sev = _calibrate_risk_severity(
+        raw_severity=None,
+        status="INFORMATION_REQUIRED",
+        is_mandatory=True,
+        category="Eligibility",
+        req_text="The bidder must have at least five years of experience delivering enterprise software or digital platforms."
+    )
+    assert sev == "HIGH", f"Expected HIGH for mandatory 5-year experience eligibility, got {sev}"
+
+
+def test_unverified_performance_security_remains_high_risk():
+    """Verifies that an unverified performance security/PBG requirement remains HIGH risk."""
+    sev = _calibrate_risk_severity(
+        raw_severity=None,
+        status="INFORMATION_REQUIRED",
+        is_mandatory=True,
+        category="Contractual",
+        req_text="A performance security of 5% of the contract value shall be submitted by the selected vendor in the form specified in the final agreement."
+    )
+    assert sev == "HIGH", f"Expected HIGH for 5% performance security bond, got {sev}"
+
+
+def test_unverified_serious_technical_security_and_sla_remains_high_risk():
+    """Verifies that technical requirements with critical security controls or strict SLAs remain HIGH risk."""
+    # 2FA authentication
+    sev_2fa = _calibrate_risk_severity(
+        raw_severity=None,
+        status="INFORMATION_REQUIRED",
+        is_mandatory=True,
+        category="Technical",
+        req_text="The solution shall support two-factor authentication for privileged administrative accounts."
+    )
+    assert sev_2fa == "HIGH", f"Expected HIGH for 2FA privileged security requirement, got {sev_2fa}"
+
+    # Strict uptime SLA
+    sev_sla = _calibrate_risk_severity(
+        raw_severity=None,
+        status="INFORMATION_REQUIRED",
+        is_mandatory=True,
+        category="Technical",
+        req_text="The service shall target monthly availability of at least 99.5%, excluding approved scheduled maintenance."
+    )
+    assert sev_sla == "HIGH", f"Expected HIGH for 99.5% availability SLA, got {sev_sla}"
+
+    # Critical incident response turnaround
+    sev_resp = _calibrate_risk_severity(
+        raw_severity=None,
+        status="INFORMATION_REQUIRED",
+        is_mandatory=True,
+        category="Technical",
+        req_text="Critical production incidents shall receive an initial response within 30 minutes of logging."
+    )
+    assert sev_resp == "HIGH", f"Expected HIGH for 30-min incident turnaround SLA, got {sev_resp}"
+
+
+def test_disqualifying_condition_produces_critical_risk():
+    """Verifies that an explicit disqualification condition produces CRITICAL risk when unverified."""
+    sev = _calibrate_risk_severity(
+        raw_severity=None,
+        status="INFORMATION_REQUIRED",
+        is_mandatory=True,
+        category="Technical",
+        req_text="Failure to provide FIPS 140-2 validated encryption shall be grounds for automatic disqualification and bid rejection."
+    )
+    assert sev == "CRITICAL", f"Expected CRITICAL for explicit disqualification clause, got {sev}"
+
+
+def test_mandatory_alone_does_not_imply_high_risk():
+    """Contrasts an ordinary mandatory technical feature (LOW) with a mandatory certification (HIGH)."""
+    ordinary_sev = _calibrate_risk_severity(
+        raw_severity=None,
+        status="INFORMATION_REQUIRED",
+        is_mandatory=True,
+        category="Technical",
+        req_text="A6 The solution shall provide configurable SMS and email notifications for appointment confirmations."
+    )
+    cert_sev = _calibrate_risk_severity(
+        raw_severity=None,
+        status="INFORMATION_REQUIRED",
+        is_mandatory=True,
+        category="Certification",
+        req_text="The bidder must provide evidence of ISO 27001 certification."
+    )
+    assert ordinary_sev in ["LOW", "MEDIUM"]
+    assert cert_sev == "HIGH"
+
+
+def test_information_required_generates_clarification_questions_regardless_of_severity():
+    """Verifies that unverified requirements generate targeted clarification questions even when risk is LOW."""
+    state: RFPProposalState = {
+        "requirements": [
+            {
+                "req_code": "REQ-NOTIF-01",
+                "text": "The platform shall support SMS and email appointment notifications.",
+                "category": "Technical",
+                "is_mandatory": True,
+                "source_page": 2,
+                "source_section": "Notifications"
+            }
+        ],
+        "compliance_matrix": [
+            {
+                "req_code": "REQ-NOTIF-01",
+                "status": "INFORMATION_REQUIRED",
+                "confidence": 0.0,
+                "evidence_text": None,
+                "notes": "No SMS gateway collateral found in knowledge base."
+            }
+        ]
+    }
+    result = assess_risks_node(state)
+    risks = result["risks"]
+    clarifs = result["clarification_questions"]
+
+    assert len(risks) == 1
+    assert risks[0]["severity"] in ["LOW", "MEDIUM"]
+    assert len(clarifs) == 1
+    assert clarifs[0]["requirement_id"] == "REQ-NOTIF-01"
+    assert clarifs[0]["clarification_type"] == "INTERNAL_INFORMATION_REQUEST"
+
+
