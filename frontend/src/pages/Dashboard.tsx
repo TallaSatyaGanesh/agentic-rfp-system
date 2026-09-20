@@ -33,8 +33,81 @@ export const Dashboard: React.FC<Props> = ({ onSelectRFP, onNavigateKnowledge })
     }
   };
 
-  const getStatusBadge = (_status: string) => {
-    return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">COMPLETED</span>;
+  const getStatusBadge = (status: string) => {
+    const s = (status || 'UPLOADED').toUpperCase();
+
+    switch (s) {
+      case 'UPLOADED':
+        return (
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+            UPLOADED
+          </span>
+        );
+      case 'ANALYZING':
+      case 'PROCESSING':
+      case 'RESUMING':
+      case 'EXTRACTING':
+      case 'CLASSIFYING':
+      case 'ANALYZING_COMPLIANCE':
+      case 'ASSESSING_RISKS':
+      case 'WRITING_PROPOSAL':
+      case 'REVISING':
+      case 'REVIEWING':
+        return (
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200 animate-pulse">
+            ANALYZING
+          </span>
+        );
+      case 'AWAITING_GO_NOGO':
+        return (
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+            AWAITING GO/NO-GO
+          </span>
+        );
+      case 'AWAITING_FINAL_APPROVAL':
+      case 'HUMAN_REVIEW_REQUIRED':
+        return (
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+            AWAITING FINAL APPROVAL
+          </span>
+        );
+      case 'APPROVED_FOR_EXPORT':
+        return (
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+            APPROVED FOR EXPORT
+          </span>
+        );
+      case 'COMPLETED':
+        return (
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+            COMPLETED
+          </span>
+        );
+      case 'ABORTED_NO_GO':
+        return (
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+            ABORTED (NO-GO)
+          </span>
+        );
+      case 'REJECTED':
+        return (
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+            REJECTED
+          </span>
+        );
+      case 'FAILED':
+        return (
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+            FAILED
+          </span>
+        );
+      default:
+        return (
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+            {s.replace(/_/g, ' ')}
+          </span>
+        );
+    }
   };
 
   return (
@@ -133,8 +206,11 @@ export const Dashboard: React.FC<Props> = ({ onSelectRFP, onNavigateKnowledge })
                   {getStatusBadge(rfp.status)}
                 </div>
 
-                <h4 className="font-bold text-sm text-slate-900 group-hover:text-sky-600 line-clamp-2 transition mb-1">
-                  {rfp.title}
+                <h4
+                  className="font-bold text-sm text-slate-900 group-hover:text-sky-600 line-clamp-2 transition mb-1 break-all"
+                  title={rfp.filename}
+                >
+                  {rfp.filename || rfp.title}
                 </h4>
                 <p className="text-xs text-slate-500 line-clamp-1 mb-4">
                   Issuer: <strong>{rfp.issuer}</strong>

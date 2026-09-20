@@ -16,6 +16,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 COPY storage/ ./storage/
 
+# Ensure no temporary or runtime database files are baked into image
+RUN rm -f /app/storage/*.db /app/storage/*.sqlite3
+
 # Environment defaults
 ENV ENVIRONMENT=production
 ENV PORT=8000

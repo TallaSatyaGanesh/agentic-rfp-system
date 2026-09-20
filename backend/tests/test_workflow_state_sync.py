@@ -8,6 +8,9 @@ from app.db.database import Base, get_db
 from app.db.models import RFPDocument
 from app.agents.graph import rfp_graph
 
+import app.api.workflow_routes as wf_routes
+import app.db.database as db_module
+
 os.makedirs("./backend/storage", exist_ok=True)
 DB_PATH = "./backend/storage/test_state_sync.db"
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
@@ -25,16 +28,19 @@ def override_get_db():
 @pytest.fixture(autouse=True)
 def setup_db():
     app.dependency_overrides[get_db] = override_get_db
+    wf_routes.SessionLocal = TestingSessionLocal
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
     engine.dispose()
     app.dependency_overrides.clear()
+    wf_routes.SessionLocal = getattr(db_module, "SessionLocal", TestingSessionLocal)
     if os.path.exists(DB_PATH):
         try:
             os.remove(DB_PATH)
         except OSError:
             pass
+
 
 client = TestClient(app)
 

@@ -28,10 +28,19 @@ backend/storage/uploads/rfp/*
 !backend/storage/uploads/rfp/.gitkeep
 backend/storage/exports/*
 !backend/storage/exports/.gitkeep
+backend/storage/*.db
+backend/storage/rfp_system.db
+backend/storage/*.sqlite3
+backend/storage/test_*.db
 backend/rfp_system.db
+*.db
+*.sqlite3
+
 
 # OS & Editor files
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+scratch/
+
