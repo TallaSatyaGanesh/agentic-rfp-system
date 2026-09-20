@@ -528,11 +528,17 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     ) and not has_vendor_actor:
         return True
 
-    # Passive buyer actions (e.g. "will be reviewed by the RCS", "will be evaluated by the client", "will be rejected by committee")
+    # Passive buyer actions (e.g. "will be reviewed by the RCS", "will be evaluated by the client", "will be rejected by committee", "shall be released by authority")
     if re.search(
-        rf'\b(?:will|shall|is\s+to)\s+be\s+(?:reviewed|monitored|evaluated|decided|approved|settled|conducted|examined|scrutinized|rejected|refunded|notified|opened)\s+by\s+(?:the\s+)?{buyer_subjects}\b',
+        rf'\b(?:will|shall|is\s+to)\s+be\s+(?:reviewed|monitored|evaluated|decided|approved|settled|released|disbursed|paid|conducted|examined|scrutinized|rejected|refunded|notified|opened)\s+by\s+(?:the\s+)?{buyer_subjects}\b',
         clean_text,
         re.IGNORECASE
+    ) and not has_vendor_actor:
+        return True
+
+    # Buyer settlement of final bill & PBG / security deposit release
+    if (
+        re.search(r'\b(?:(?:final\s+)?(?:bill|payment|invoices?)\s+(?:and\s+)?(?:shall|will)\s+be\s+settled|(?:pbg|performance\s+bank\s+guarantee|security\s+deposit)\s+(?:shall|will)\s+be\s+released\s+by\s+[^\n\r.]+?)\b', clean_text, re.IGNORECASE)
     ) and not has_vendor_actor:
         return True
 
@@ -686,8 +692,12 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         ):
             return True
 
-    # 9.5 Vague UI Form Display Narrative without actionable specifications
-    if re.search(r'^(?:the\s+)?(?:system|portal|application|form)\s+will\s+display\s+relevant\s+fields\s+in\s+the\s+form\.?\s*$', clean_text, re.IGNORECASE):
+    # 9.5 Vague UI Form Display & Generic Touchpoint Narrative without actionable specifications
+    if (
+        re.search(r'^(?:the\s+)?(?:system|portal|application|form)\s+will\s+display\s+relevant\s+fields\s+in\s+the\s+form\.?\s*$', clean_text, re.IGNORECASE)
+        or re.search(r'^\s*(?:The\s+)?(?:User\s+Touchpoints\s+)?(?:Web\s+Portal|Portal|Application|System)\s+will\s+(?:allow\s+users\s+to\s+(?:manage\s+and\s+)?access|provide\s+access\s+to)\s+(?:any|all)\s+information\.?\s*$', clean_text, re.IGNORECASE)
+        or re.search(r'^\s*There\s+(?:will\s+be|are)\s+(?:various|different|multiple)?\s*(?:external\s+)?(?:services|systems|gateways|servers|platforms|sources)\s+(?:like|such\s+as)\b[^\n\r]*$', clean_text, re.IGNORECASE)
+    ):
         return True
 
     # 10. Tender Deposits, EMD, and Bank Guarantee Logistics
@@ -923,7 +933,7 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> tuple[List[RawC
     )
 
     bullet_start_pattern = re.compile(
-        r'^\s*(?:[•\-\*\uf0b7–—\u25cb\u25ef\u25e6\u2022\u2219\u2043]|\([0-9a-zA-Z]\)|\d{1,2}(?:\.\d{1,2}){0,3}[\.\)]|[a-zA-Z][\.\)]|[oO]\s{2,}(?=[A-Z0-9]))\s+'
+        r'^\s*(?:[•\-\*\uf0b7–—\u25cb\u25ef\u25e6\u2022\u2219\u2043]|\([0-9a-zA-Z]\)|\d{1,2}(?:\.\d{1,2}){0,3}[\.\)]|[a-zA-Z][\.\)]|[oO]\s+)\s*'
     )
 
     for b in blocks:
@@ -969,24 +979,60 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> tuple[List[RawC
             )
             if is_item_start and current_chunk:
                 item_chunks.append(" ".join(current_chunk))
-                current_chunk = [re.sub(r'^\s*(?:[•\-\*\uf0b7–—\u25cb\u25ef\u25e6\u2022\u2219\u2043]|\([0-9a-zA-Z]\)|\d{1,2}(?:\.\d{1,2}){0,3}[\.\)]|[a-zA-Z][\.\)]|[oO]\s{2,})\s*', '', line)]
+                current_chunk = [re.sub(r'^\s*(?:[•\-\*\uf0b7–—\u25cb\u25ef\u25e6\u2022\u2219\u2043]|\([0-9a-zA-Z]\)|\d{1,2}(?:\.\d{1,2}){0,3}[\.\)]|[a-zA-Z][\.\)]|[oO]\s+)\s*', '', line)]
             else:
                 current_chunk.append(line)
         if current_chunk:
             item_chunks.append(" ".join(current_chunk))
 
+        # Intra-block supplementary sentence merging:
+        # Merges short delivery/support channel/schedule bullets into the preceding parent bullet in the same topic
+        merged_chunks: List[str] = []
         for chunk in item_chunks:
+            c_clean = chunk.strip().strip('-*•o \t')
+            if not c_clean:
+                continue
+            is_supplementary_chunk = (
+                bool(merged_chunks)
+                and len(c_clean.split()) <= 7
+                and bool(re.match(r'^(?:training|testing|support|meetings?|sessions?)\s+(?:will|shall)\s+be\s+(?:conducted|provided|held|done|scheduled)\b', c_clean, re.IGNORECASE))
+                and bool(re.search(r'\b(?:training|testing|support|meetings?|sessions?)\b', merged_chunks[-1], re.IGNORECASE))
+            )
+            if is_supplementary_chunk:
+                merged_chunks[-1] = merged_chunks[-1].rstrip('.') + ". " + c_clean
+            else:
+                merged_chunks.append(chunk)
+
+        for chunk in merged_chunks:
             chunk_clean = chunk.strip().strip('-*•o \t')
             if len(chunk_clean.split()) < 4 or len(chunk_clean) < 20:
                 continue
 
-            # Sub-split paragraph into individual sentences if multiple distinct obligation modals exist in unnumbered prose
+            # Sub-split inline sub-bullets or multiple modal sentences within unnumbered prose
             sub_chunks = [chunk_clean]
+            has_inline_subbullets = bool(re.search(r'\s+[oO]\s+(?=[A-Z])', chunk_clean))
             modal_count = len(re.findall(r'\b(?:shall|must|required|mandatory|will|should|is\s+required\s+to|are\s+required\s+to|is\s+expected\s+to)\b', chunk_clean, re.IGNORECASE))
-            if modal_count >= 2 and not numbered_clause_pattern.match(chunk_clean):
-                split_sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+(?=[A-Z])', chunk_clean) if s.strip()]
-                if len(split_sents) >= 2:
-                    sub_chunks = split_sents
+
+            if has_inline_subbullets:
+                split_bullets = [s.strip() for s in re.split(r'\s+[oO]\s+(?=[A-Z])', chunk_clean) if s.strip()]
+                if len(split_bullets) >= 2:
+                    sub_chunks = split_bullets
+            elif modal_count >= 2 and not numbered_clause_pattern.match(chunk_clean):
+                raw_sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+(?=[A-Z])', chunk_clean) if s.strip()]
+                if len(raw_sents) >= 2:
+                    stitched_sents: List[str] = []
+                    for sent in raw_sents:
+                        is_short_supp = (
+                            bool(stitched_sents)
+                            and len(sent.split()) <= 7
+                            and bool(re.match(r'^(?:training|testing|support|meetings?|sessions?)\s+(?:will|shall)\s+be\s+(?:conducted|provided|held|done|scheduled)\b', sent, re.IGNORECASE))
+                            and bool(re.search(r'\b(?:training|testing|support|meetings?|sessions?)\b', stitched_sents[-1], re.IGNORECASE))
+                        )
+                        if is_short_supp:
+                            stitched_sents[-1] = stitched_sents[-1].rstrip('.') + ". " + sent
+                        else:
+                            stitched_sents.append(sent)
+                    sub_chunks = stitched_sents
 
             for sub_c in sub_chunks:
                 clean_clause = _clean_clause_text(sub_c.strip().strip('-*•o \t'))
@@ -1047,8 +1093,8 @@ def _create_block_batches(
 
 def _normalize_clause_sig(text: str) -> str:
     """Computes a robust semantic signature for deduplication."""
-    # Strip leading common determiners / list markers e.g. "The", "A", "An", "All", "1.", "•"
-    clean = re.sub(r'^\s*(?:[•\-\*\uf0b7–—\u25cb\u25ef\u25e6\u2022\u2219\u2043]|\([0-9a-zA-Z]\)|\d{1,2}(?:\.\d{1,2}){0,3}[\.\)]|[a-zA-Z][\.\)]|[oO]\s{2,}|\b(?:the|a|an|all)\b)\s+', '', text, flags=re.IGNORECASE)
+    # Strip leading common determiners / list markers e.g. "The", "A", "An", "All", "1.", "•", "o"
+    clean = re.sub(r'^\s*(?:[•\-\*\uf0b7–—\u25cb\u25ef\u25e6\u2022\u2219\u2043]|\([0-9a-zA-Z]\)|\d{1,2}(?:\.\d{1,2}){0,3}[\.\)]|[a-zA-Z][\.\)]|[oO]\s+|\b(?:the|a|an|all)\b)\s*', '', text, flags=re.IGNORECASE)
     cleaned = re.sub(r'[^a-z0-9]', '', clean.lower())
     return cleaned[:250]
 

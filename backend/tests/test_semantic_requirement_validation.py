@@ -531,3 +531,73 @@ def test_mandatory_vs_optional_modal_parsing():
         assert is_m is False
         assert conf == 0.0
 
+
+def test_paired_buyer_bill_settlement_and_pbg_release_vs_vendor_handover():
+    """Validates exclusion of buyer payment settlement and PBG release procedures while preserving vendor handover obligations."""
+    buyer_settlement_procedures = [
+        "The final bill under the project and shall be settled and PBG shall be released by RCS-<State_Name> only after successful data migration to new vendor selected by RCS-<State_Name> or to RCS-<State_Name> and after handing over the project related Documentation / data / information/ Reports, etc. to the satisfaction of RCS-<State_Name>.",
+        "The final bill will be settled and PBG shall be released by the authority upon successful signoff.",
+        "Final payment invoices shall be settled by the client within 30 days of deliverable acceptance.",
+        "Security deposit shall be released by the employer after the defect liability period."
+    ]
+    for clause in buyer_settlement_procedures:
+        assert _is_non_requirement_heading_or_criterion(clause), f"Expected buyer settlement procedure '{clause}' to be rejected."
+
+    vendor_handover_obligations = [
+        "The Service Provider shall be legally bound to hand over all the project related documents, data and all other project related information to RCS-<State_Name> or its authorized agency.",
+        "The selected bidder will be responsible for migration of entire data (applications, databases, file storage, etc.) to new service provider without charging RCS-<State_Name> any cost.",
+        "The successful Bidder will be required to provide a Performance Bank Guarantee for an amount equivalent to 3% of the contract value, in the form of Bank Guarantee from a scheduled commercial bank."
+    ]
+    for clause in vendor_handover_obligations:
+        assert not _is_non_requirement_heading_or_criterion(clause), f"Expected vendor obligation '{clause}' to be accepted."
+
+
+def test_paired_existential_context_and_touchpoint_tautology_vs_genuine_system_specs():
+    """Validates exclusion of existential infrastructure context and vague touchpoint tautologies while preserving concrete system specifications."""
+    vague_context_statements = [
+        "There will be external services like Mail Server, SMS Gateway, Email Gateway.",
+        "There are multiple external systems such as Payment Gateway, SMS Gateway, and LDAP Server.",
+        "User Touchpoints Web Portal will allow users to manage and access any information.",
+        "Web Portal will allow users to manage and access any information.",
+        "The application will provide access to all information."
+    ]
+    for clause in vague_context_statements:
+        assert _is_non_requirement_heading_or_criterion(clause), f"Expected vague context statement '{clause}' to be rejected."
+
+    genuine_specs = [
+        "The system will facilitate notification of status of application through SMS and email of applicant in automated mode.",
+        "Integration with external platforms (like e-Office, UIDAI, BharatVC, SMS, Digital Signature, and others if required)",
+        "The portal will be responsive and be able to successfully render over major web browsers on desktop, laptop and mobile.",
+        "Separate role based secured Login with 2FA will be provided to all the Stakeholders.",
+        "Audit Trail Application will allow the admin users to track all activities, manage log files and create audit trail reports at documents."
+    ]
+    for clause in genuine_specs:
+        assert not _is_non_requirement_heading_or_criterion(clause), f"Expected genuine specification '{clause}' to be accepted."
+
+
+def test_paired_password_features_vs_user_interaction_narratives():
+    """Validates preservation of system authentication/password capabilities while filtering procedural user click narratives."""
+    user_interaction_narratives = [
+        "If user forgets his password, he will enter his registered email id",
+        "Enter old password",
+        "Enter new password",
+        "Enter confirm password",
+        "If both password match, password will be changed",
+        "User will be able to change his password by using change password feature.",
+        "User enters user id and password. After successful verification, applicant will login and redirected to user home page",
+        "User clicks on Register button and selects role from dropdown"
+    ]
+    for clause in user_interaction_narratives:
+        assert _is_non_requirement_heading_or_criterion(clause), f"Expected user interaction narrative '{clause}' to be rejected."
+
+    system_auth_capabilities = [
+        "System will have provision to retrieve password.",
+        "System will verify the new password and confirm password.",
+        "The platform shall support two-factor authentication (2FA) for all administrative users.",
+        "The database shall support active-active clustering with automated failover and zero data loss."
+    ]
+    for clause in system_auth_capabilities:
+        assert not _is_non_requirement_heading_or_criterion(clause), f"Expected system capability '{clause}' to be accepted."
+
+
+
