@@ -226,9 +226,26 @@ class ProposalExporterService:
                 ProposalExporterService._format_cell(row_cells[1], category)
                 ProposalExporterService._format_cell(row_cells[2], text)
                 ProposalExporterService._format_cell(row_cells[3], reason)
+        elif info_req_count > 0:
+            p_nc = doc.add_paragraph()
+            if info_req_count == total_reqs and total_reqs > 0:
+                msg = (
+                    f"No requirements were classified as explicitly non-compliant. However, all {total_reqs} "
+                    f"requirements remain INFORMATION_REQUIRED because sufficient verified company evidence "
+                    f"was not available to establish compliance."
+                )
+            else:
+                msg = (
+                    f"No requirements were classified as explicitly non-compliant. However, {info_req_count} "
+                    f"of {total_reqs} requirement(s) remain INFORMATION_REQUIRED because sufficient verified "
+                    f"company evidence was not available to establish compliance."
+                )
+            r_nc = p_nc.add_run(msg)
+            r_nc.font.color.rgb = RGBColor(194, 65, 12)
+            r_nc.font.bold = True
         else:
             p_nc = doc.add_paragraph()
-            r_nc = p_nc.add_run("✓ Zero non-compliant requirements identified. The proposed solution meets or exceeds all core baseline specifications.")
+            r_nc = p_nc.add_run("✓ Zero non-compliant requirements identified. The proposed solution meets or exceeds all evaluated baseline specifications.")
             r_nc.font.color.rgb = RGBColor(22, 101, 52)
             r_nc.font.bold = True
 

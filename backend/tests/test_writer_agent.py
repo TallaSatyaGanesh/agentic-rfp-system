@@ -770,6 +770,81 @@ def test_executive_compliance_summary_dynamic_rendering(tmp_path):
     assert "REQ-005" in matrix_text
 
 
+def test_executive_summary_section_1_2_dynamic_wording(tmp_path):
+    """
+    Verifies that Section 1.2 dynamically adjusts its narrative wording:
+    1. When 100% of requirements are INFORMATION_REQUIRED (e.g. 65/65), states that all remain INFORMATION_REQUIRED without false compliance claims.
+    2. When some requirements are INFORMATION_REQUIRED and non_compliant = 0, states the exact count.
+    3. When non_compliant = 0 and info_required = 0, states zero non-compliant requirements.
+    """
+    mock_meta = {"title": "State Governance Portal", "issuer": "RCS"}
+    mock_draft = {"title": "PROPOSAL RESPONSE", "sections": []}
+
+    # Case 1: All requirements are INFORMATION_REQUIRED (65 total)
+    matrix_all_info = [
+        {"req_code": f"REQ-{i:03d}", "category": "General", "status": "INFORMATION_REQUIRED", "notes": "No verified evidence."}
+        for i in range(1, 66)
+    ]
+    out_file1 = os.path.join(tmp_path, "all_info.docx")
+    ProposalExporterService.export_to_docx(
+        rfp_metadata=mock_meta,
+        proposal_draft=mock_draft,
+        compliance_matrix=matrix_all_info,
+        risks=[],
+        clarifications=[],
+        output_path=out_file1
+    )
+    doc1 = docx.Document(out_file1)
+    paras1 = [p.text for p in doc1.paragraphs if p.text]
+    assert any(
+        "No requirements were classified as explicitly non-compliant. However, all 65 requirements remain INFORMATION_REQUIRED because sufficient verified company evidence was not available to establish compliance." in p
+        for p in paras1
+    )
+    assert not any("The proposed solution meets or exceeds all core baseline specifications" in p for p in paras1)
+
+    # Case 2: Subset of requirements are INFORMATION_REQUIRED (5 out of 10), 0 non-compliant
+    matrix_subset_info = [
+        {"req_code": f"REQ-{i:03d}", "category": "Technical", "status": "COMPLIANT", "notes": "Supported natively."}
+        for i in range(1, 6)
+    ] + [
+        {"req_code": f"REQ-{i:03d}", "category": "Commercial", "status": "INFORMATION_REQUIRED", "notes": "Input needed."}
+        for i in range(6, 11)
+    ]
+    out_file2 = os.path.join(tmp_path, "subset_info.docx")
+    ProposalExporterService.export_to_docx(
+        rfp_metadata=mock_meta,
+        proposal_draft=mock_draft,
+        compliance_matrix=matrix_subset_info,
+        risks=[],
+        clarifications=[],
+        output_path=out_file2
+    )
+    doc2 = docx.Document(out_file2)
+    paras2 = [p.text for p in doc2.paragraphs if p.text]
+    assert any(
+        "No requirements were classified as explicitly non-compliant. However, 5 of 10 requirement(s) remain INFORMATION_REQUIRED because sufficient verified company evidence was not available to establish compliance." in p
+        for p in paras2
+    )
+
+    # Case 3: 100% COMPLIANT (0 non-compliant, 0 info required)
+    matrix_fully_compliant = [
+        {"req_code": f"REQ-{i:03d}", "category": "Technical", "status": "COMPLIANT", "notes": "Supported natively."}
+        for i in range(1, 6)
+    ]
+    out_file3 = os.path.join(tmp_path, "fully_compliant.docx")
+    ProposalExporterService.export_to_docx(
+        rfp_metadata=mock_meta,
+        proposal_draft=mock_draft,
+        compliance_matrix=matrix_fully_compliant,
+        risks=[],
+        clarifications=[],
+        output_path=out_file3
+    )
+    doc3 = docx.Document(out_file3)
+    paras3 = [p.text for p in doc3.paragraphs if p.text]
+    assert any("Zero non-compliant requirements identified." in p for p in paras3)
+
+
 # ==============================================================================
 # REMEDIATION TEST A: Unsupported capability without forbidden regex
 # ==============================================================================
