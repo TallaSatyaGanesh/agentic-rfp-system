@@ -15,6 +15,7 @@ from app.models.schemas import (
     RequirementResponse
 )
 from app.services.exporter import ProposalExporterService
+import docx
 
 # ==============================================================================
 # TEST A: COMPLIANT response uses only verified evidence
@@ -615,6 +616,158 @@ def test_docx_generation_from_structured_proposal(tmp_path):
 
     assert os.path.exists(exported_path)
     assert os.path.getsize(exported_path) > 1000
+
+    # Verify document structure and Executive Summary
+    doc = docx.Document(exported_path)
+    headings = [p.text for p in doc.paragraphs if p.text]
+    assert any("Executive Compliance & Risk Summary" in h for h in headings)
+    assert any("Detailed Proposal Response" in h for h in headings)
+    assert any("Appendix A: Formal Requirement Compliance Matrix" in h for h in headings)
+
+
+def test_executive_compliance_summary_dynamic_rendering(tmp_path):
+    """
+    Verifies that ProposalExporterService dynamically renders all components of
+    the Executive Compliance & Risk Summary without hardcoded values:
+    - Compliance metrics table (totals, %, partial, non-compliant, info-required)
+    - Non-compliant items table
+    - Partially compliant items table
+    - Information-required items table
+    - Key risk register table with severity levels
+    - Clarification questions table with Q# and rationale
+    - Proposal body sections and Appendix A matrix
+    """
+    mock_metadata = {
+        "title": "Hospital Management Cloud RFP",
+        "issuer": "Apex Health System",
+        "submission_deadline": "2026-10-15"
+    }
+    mock_draft = {
+        "title": "PROPOSAL FOR APEX HEALTH SYSTEM",
+        "sections": [
+            {
+                "section_title": "Executive Summary",
+                "content_markdown": "We are pleased to submit our enterprise solution."
+            },
+            {
+                "section_title": "Technical Architecture",
+                "content_markdown": "### Microservices Design\nOur architecture is scalable.\n- Feature 1\n- Feature 2"
+            }
+        ]
+    }
+    mock_compliance = [
+        {"req_code": "REQ-001", "category": "Security", "status": "COMPLIANT", "company_source_doc": "SOC2_Report.pdf", "requirement_text": "SOC2 Type II Certification."},
+        {"req_code": "REQ-002", "category": "Security", "status": "COMPLIANT", "company_source_doc": "Security_Whitepaper.pdf", "requirement_text": "AES-256 Encryption."},
+        {"req_code": "REQ-003", "category": "Technical", "status": "PARTIALLY_COMPLIANT", "notes": "Supported through REST API connector.", "requirement_text": "Custom HL7 FHIR sync."},
+        {"req_code": "REQ-004", "category": "Infrastructure", "status": "NON_COMPLIANT", "notes": "Legacy on-premise mainframe unsupported.", "requirement_text": "Mainframe OS/390 support."},
+        {"req_code": "REQ-005", "category": "Legal", "status": "INFORMATION_REQUIRED", "notes": "Need clarification on indemnification liability cap.", "requirement_text": "Unlimited liability terms."}
+    ]
+    mock_risks = [
+        {
+            "category": "Technical",
+            "severity": "High",
+            "likelihood": "Medium",
+            "description": "Legacy mainframe integration gap may delay ingestion.",
+            "mitigation_strategy": "Deploy dedicated FHIR modern middleware bridge."
+        },
+        {
+            "category": "Legal",
+            "severity": "Medium",
+            "likelihood": "Low",
+            "description": "Indemnification terms require mutual cap agreement.",
+            "mitigation_strategy": "Negotiate standard commercial limitation during contract phase."
+        }
+    ]
+    mock_clarifications = [
+        {
+            "q_number": 1,
+            "rfp_section_reference": "Section 4.2 - Legacy Systems",
+            "question_text": "Can the mainframe interface be bridged via REST API endpoints?",
+            "rationale": "To determine exact scope for the HL7/FHIR translation bridge."
+        }
+    ]
+
+    out_docx = os.path.join(tmp_path, "executive_summary_test.docx")
+    exported_file = ProposalExporterService.export_to_docx(
+        rfp_metadata=mock_metadata,
+        proposal_draft=mock_draft,
+        compliance_matrix=mock_compliance,
+        risks=mock_risks,
+        clarifications=mock_clarifications,
+        output_path=out_docx
+    )
+
+    assert os.path.exists(exported_file)
+    doc = docx.Document(exported_file)
+
+    # 1. Verify Headings
+    headings = [p.text for p in doc.paragraphs if p.text]
+    assert any("1. Executive Compliance & Risk Summary" in h for h in headings)
+    assert any("1.1 Compliance Scorecard & Metric Breakdown" in h for h in headings)
+    assert any("1.2 Non-Compliant Requirements & Capability Gaps" in h for h in headings)
+    assert any("1.3 Partially Compliant Requirements & Caveats" in h for h in headings)
+    assert any("1.4 Information-Required Action Items" in h for h in headings)
+    assert any("1.5 Key Risk Register & Mitigation Strategy" in h for h in headings)
+    assert any("1.6 Tender Clarification Questions" in h for h in headings)
+    assert any("2. Detailed Proposal Response" in h for h in headings)
+    assert any("Appendix A: Formal Requirement Compliance Matrix" in h for h in headings)
+
+    # 2. Verify Tables
+    # Table 0: Scorecard table
+    scorecard = doc.tables[0]
+    scorecard_headers = [c.text for c in scorecard.rows[0].cells]
+    assert "Total Evaluated" in scorecard_headers
+    assert "Full Compliance" in scorecard_headers
+    assert "Partial Compliance" in scorecard_headers
+    assert "Non-Compliant Gaps" in scorecard_headers
+    assert "Information Needed" in scorecard_headers
+
+    scorecard_values = [c.text for c in scorecard.rows[1].cells]
+    assert "5 Requirements" in scorecard_values[0]
+    assert "2 (40.0%)" in scorecard_values[1]  # 2 out of 5 = 40.0%
+    assert "1 Items" in scorecard_values[2]
+    assert "1 Gaps" in scorecard_values[3]
+    assert "1 Items" in scorecard_values[4]
+
+    # Table 1: Non-Compliant table
+    nc_table = doc.tables[1]
+    nc_text = " ".join(c.text for row in nc_table.rows for c in row.cells)
+    assert "REQ-004" in nc_text
+    assert "Legacy on-premise mainframe unsupported." in nc_text
+
+    # Table 2: Partially Compliant table
+    pc_table = doc.tables[2]
+    pc_text = " ".join(c.text for row in pc_table.rows for c in row.cells)
+    assert "REQ-003" in pc_text
+    assert "Supported through REST API connector." in pc_text
+
+    # Table 3: Information Required table
+    ir_table = doc.tables[3]
+    ir_text = " ".join(c.text for row in ir_table.rows for c in row.cells)
+    assert "REQ-005" in ir_text
+    assert "Need clarification on indemnification liability cap." in ir_text
+
+    # Table 4: Key Risks table
+    risk_table = doc.tables[4]
+    risk_text = " ".join(c.text for row in risk_table.rows for c in row.cells)
+    assert "High" in risk_text
+    assert "Deploy dedicated FHIR modern middleware bridge." in risk_text
+
+    # Table 5: Clarification Questions table
+    clarif_table = doc.tables[5]
+    clarif_text = " ".join(c.text for row in clarif_table.rows for c in row.cells)
+    assert "Q-1" in clarif_text
+    assert "Section 4.2 - Legacy Systems" in clarif_text
+    assert "Can the mainframe interface be bridged via REST API endpoints?" in clarif_text
+
+    # Table 6: Appendix A Matrix
+    matrix_table = doc.tables[6]
+    matrix_text = " ".join(c.text for row in matrix_table.rows for c in row.cells)
+    assert "REQ-001" in matrix_text
+    assert "REQ-002" in matrix_text
+    assert "REQ-003" in matrix_text
+    assert "REQ-004" in matrix_text
+    assert "REQ-005" in matrix_text
 
 
 # ==============================================================================

@@ -23,11 +23,19 @@ yarn-error.log*
 .env.*.local
 backend/.env
 
-# Local Storage Runtime Data (preserves structure and sample collateral)
+# Local Storage Runtime Data & Ephemeral Vectors (preserves directory structure via .gitkeep)
 backend/storage/uploads/rfp/*
 !backend/storage/uploads/rfp/.gitkeep
+backend/storage/uploads/company/*
+!backend/storage/uploads/company/.gitkeep
 backend/storage/exports/*
 !backend/storage/exports/.gitkeep
+backend/storage/chromadb/*
+!backend/storage/chromadb/.gitkeep
+backend/storage/**/*.sqlite3
+backend/storage/**/*.db
+backend/storage/**/*.bin
+backend/storage/**/*.pickle
 backend/storage/*.db
 backend/storage/rfp_system.db
 backend/storage/*.sqlite3
@@ -36,11 +44,9 @@ backend/rfp_system.db
 *.db
 *.sqlite3
 
-
 # OS & Editor files
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 scratch/
-

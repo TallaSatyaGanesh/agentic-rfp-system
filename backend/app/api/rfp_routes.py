@@ -215,11 +215,38 @@ def export_proposal(rfp_id: str, export_format: str, db: Session = Depends(get_d
         .all()
     )
     compliance_list = [
-        {"req_code": c.requirement.req_code, "category": c.requirement.category, "status": c.status, "company_source_doc": c.company_source_doc}
+        {
+            "req_code": c.requirement.req_code,
+            "category": c.requirement.category,
+            "requirement_text": c.requirement.text,
+            "status": c.status,
+            "confidence": c.confidence,
+            "company_source_doc": c.company_source_doc,
+            "evidence_text": c.evidence_text,
+            "notes": c.notes,
+        }
         for c in comp_records
     ]
-    risks = [{"category": r.category, "severity": r.severity, "description": r.description, "mitigation_strategy": r.mitigation_strategy} for r in rfp.risks]
-    clarifications = [{"q_number": q.q_number, "rfp_section_reference": q.rfp_section_reference, "question_text": q.question_text} for q in rfp.clarifications]
+    risks = [
+        {
+            "category": r.category,
+            "severity": r.severity,
+            "likelihood": r.likelihood,
+            "description": r.description,
+            "mitigation_strategy": r.mitigation_strategy,
+            "rfp_reference": r.rfp_reference,
+        }
+        for r in rfp.risks
+    ]
+    clarifications = [
+        {
+            "q_number": q.q_number,
+            "rfp_section_reference": q.rfp_section_reference,
+            "question_text": q.question_text,
+            "rationale": q.rationale,
+        }
+        for q in rfp.clarifications
+    ]
 
     file_format = export_format.lower()
     if file_format in ["docx", "doc"]:

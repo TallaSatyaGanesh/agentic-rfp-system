@@ -1,8 +1,13 @@
+import os
+import logging
 from typing import List, Dict, Any, Optional
-import uuid
+from pathlib import Path
 import re
 from app.rag.vector_store import VectorStoreManager
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
 
 class KnowledgeBaseRetriever:
     def __init__(self):
@@ -23,7 +28,7 @@ class KnowledgeBaseRetriever:
             else:
                 if current_chunk:
                     chunks.append(current_chunk)
-                
+
                 # If paragraph itself is larger than chunk_size, split by sentences
                 if len(p) > chunk_size:
                     sentences = re.split(r'(?<=[.!?]) +', p)
@@ -61,6 +66,7 @@ class KnowledgeBaseRetriever:
         """
         Chunks and indexes a company collateral document into ChromaDB.
         Preserves document ID, title, filename, page, and section metadata.
+        Guarantees idempotency by clearing existing chunks for doc_id first.
         Returns the number of chunks indexed.
         """
         # Guardrail: Never allow RFP/tender documents to be indexed as company collateral
@@ -71,6 +77,13 @@ class KnowledgeBaseRetriever:
         chunks = self.chunk_text(content)
         if not chunks:
             return 0
+
+        # Idempotency guarantee: purge existing chunks for this doc_id before re-adding
+        try:
+            if self.vector_store._collection:
+                self.vector_store._collection.delete(where={"company_doc_id": doc_id})
+        except Exception:
+            pass
 
         texts = []
         metadatas = []
@@ -119,7 +132,7 @@ class KnowledgeBaseRetriever:
         min_similarity = threshold if threshold is not None else settings.SIMILARITY_THRESHOLD
 
         results = self.vector_store.query(query_text=query, n_results=k)
-        
+
         documents = results.get("documents", [[]])[0]
         metadatas = results.get("metadatas", [[]])[0]
         distances = results.get("distances", [[]])[0]
@@ -128,7 +141,7 @@ class KnowledgeBaseRetriever:
 
         for doc_text, meta, dist in zip(documents, metadatas, distances):
             cos_sim = max(0.0, 1.0 - dist)
-            
+
             # Hybrid scoring: Combine vector similarity with lexical token overlap
             q_tokens = set(re.findall(r'\b[a-zA-Z0-9_\-\.]{3,}\b', query.lower()))
             d_tokens = set(re.findall(r'\b[a-zA-Z0-9_\-\.]{3,}\b', doc_text.lower()))
@@ -150,3 +163,70 @@ class KnowledgeBaseRetriever:
                 })
 
         return valid_evidence
+
+    def sync_knowledge_base_from_db(self, db) -> int:
+        """
+        Idempotently synchronizes ChromaDB vector store from persistent CompanyDocument records.
+        If ChromaDB is empty or missing vectors for registered documents, restores file content
+        from local disk or Supabase Storage and re-indexes them.
+        Returns the total number of documents synchronized.
+        """
+        from app.db.models import CompanyDocument
+        from app.services.storage_service import StorageService
+        from app.services.document_parser import DocumentParserService
+
+        docs = db.query(CompanyDocument).all()
+        if not docs:
+            return 0
+
+        existing_doc_ids = set()
+        try:
+            if self.vector_store._collection:
+                coll_data = self.vector_store._collection.get(include=["metadatas"])
+                for meta in coll_data.get("metadatas", []):
+                    cid = meta.get("company_doc_id")
+                    if cid:
+                        existing_doc_ids.add(cid)
+        except Exception as e:
+            logger.warning(f"[KnowledgeBaseRetriever] Error checking ChromaDB collection: {e}")
+
+        synced_count = 0
+        for doc in docs:
+            # If already indexed, skip for idempotency
+            if doc.id in existing_doc_ids:
+                continue
+
+            local_file = StorageService.ensure_local_company_file(
+                file_path=doc.file_path,
+                doc_id=doc.id,
+                filename=doc.filename
+            )
+
+            # Fallback to root workspace collateral files if not found
+            if not local_file or not os.path.exists(local_file):
+                root_fallback = Path(settings.UPLOAD_DIR).parent.parent.parent / doc.filename
+                if os.path.exists(root_fallback):
+                    local_file = str(root_fallback)
+
+            if local_file and os.path.exists(local_file):
+                try:
+                    blocks = DocumentParserService.parse_document(local_file)
+                    full_text = "\n\n".join([b.text for b in blocks])
+                    if full_text.strip():
+                        chunks = self.index_document(
+                            doc_id=doc.id,
+                            title=doc.title,
+                            filename=doc.filename,
+                            content=full_text,
+                            category=doc.category
+                        )
+                        synced_count += 1
+                        logger.info(
+                            f"[KnowledgeBaseRetriever] Auto-synchronized {doc.id} ({doc.title}) into ChromaDB ({chunks} chunks)."
+                        )
+                except Exception as ex:
+                    logger.error(f"[KnowledgeBaseRetriever] Error indexing {doc.id} ({doc.filename}): {ex}")
+            else:
+                logger.warning(f"[KnowledgeBaseRetriever] Could not locate file for company doc {doc.id} ({doc.filename}).")
+
+        return synced_count
