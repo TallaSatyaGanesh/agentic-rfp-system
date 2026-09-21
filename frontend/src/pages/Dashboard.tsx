@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Plus, ArrowRight, ShieldCheck, AlertCircle, Clock, Database } from 'lucide-react';
+import { FileText, Plus, ArrowRight, ShieldCheck, AlertCircle, Clock, Database, Archive } from 'lucide-react';
 import { RFPDocumentSummary } from '../types';
 import { api } from '../services/api';
 import { DocumentUploadModal } from '../components/ingestion/DocumentUploadModal';
@@ -30,6 +30,38 @@ export const Dashboard: React.FC<Props> = ({ onSelectRFP, onNavigateKnowledge })
       setError('Unable to load RFP projects. Please verify the backend server is running.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const isArchivable = (status: string) => {
+    const s = (status || '').toUpperCase();
+    const running = [
+      'PROCESSING',
+      'EXTRACTING',
+      'CLASSIFYING',
+      'ANALYZING_COMPLIANCE',
+      'ASSESSING_RISKS',
+      'WRITING_PROPOSAL',
+      'REVISING',
+      'REVIEWING',
+      'RESUMING',
+      'ANALYZING'
+    ];
+    const protectedStatuses = ['APPROVED_FOR_EXPORT', 'COMPLETED'];
+    return !running.includes(s) && !protectedStatuses.includes(s);
+  };
+
+  const handleArchive = async (e: React.MouseEvent, rfpId: string) => {
+    e.stopPropagation();
+    if (!window.confirm('Are you sure you want to archive this RFP project? It will be safely removed from the active dashboard.')) {
+      return;
+    }
+    try {
+      await api.archiveRFP(rfpId);
+      await loadRFPs();
+    } catch (err: any) {
+      console.error('Failed to archive RFP:', err);
+      alert(err?.response?.data?.detail || 'Failed to archive RFP project.');
     }
   };
 
@@ -203,7 +235,18 @@ export const Dashboard: React.FC<Props> = ({ onSelectRFP, onNavigateKnowledge })
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <span className="font-mono text-[10px] font-bold text-slate-400">{rfp.id}</span>
-                  {getStatusBadge(rfp.status)}
+                  <div className="flex items-center gap-1.5">
+                    {getStatusBadge(rfp.status)}
+                    {isArchivable(rfp.status) && (
+                      <button
+                        onClick={(e) => handleArchive(e, rfp.id)}
+                        title="Archive this RFP project"
+                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100 transition"
+                      >
+                        <Archive className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <h4

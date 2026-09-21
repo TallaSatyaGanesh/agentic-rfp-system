@@ -18,6 +18,7 @@ class RFPDocument(Base):
     issuer = Column(String(255), default="Unknown Issuer")
     submission_deadline = Column(String(100), nullable=True)
     status = Column(String(50), default="UPLOADED")  # UPLOADED, PROCESSING, ANALYZED, PROPOSAL_DRAFTED, COMPLETED, FAILED
+    archived_at = Column(DateTime, nullable=True, default=None)
     created_at = Column(DateTime, default=utc_now)
 
     requirements = relationship("Requirement", back_populates="rfp", cascade="all, delete-orphan")

@@ -20,8 +20,20 @@ const client = axios.create({
 
 export const api = {
   // RFP Document Endpoints
-  async listRFPs(): Promise<RFPDocumentSummary[]> {
-    const res = await client.get('/api/rfp');
+  async listRFPs(includeArchived: boolean = false): Promise<RFPDocumentSummary[]> {
+    const res = await client.get('/api/rfp', {
+      params: { include_archived: includeArchived }
+    });
+    return res.data;
+  },
+
+  async archiveRFP(rfpId: string): Promise<{ id: string; message: string; archived_at: string }> {
+    const res = await client.post(`/api/rfp/${rfpId}/archive`);
+    return res.data;
+  },
+
+  async unarchiveRFP(rfpId: string): Promise<{ id: string; message: string; archived_at: string | null }> {
+    const res = await client.post(`/api/rfp/${rfpId}/unarchive`);
     return res.data;
   },
 

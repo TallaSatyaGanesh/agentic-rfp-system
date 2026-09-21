@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.db.database import engine, Base, SessionLocal
+from app.db.database import engine, Base, SessionLocal, ensure_schema_migrations
 from app.api.rfp_routes import router as rfp_router
 from app.api.workflow_routes import router as workflow_router
 from app.api.knowledge_routes import router as knowledge_router
@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Startup: Initialize database schema and auto-sync ChromaDB knowledge base
     Base.metadata.create_all(bind=engine)
+    try:
+        ensure_schema_migrations(engine)
+    except Exception as e:
+        logger.warning(f"[Main] Schema migration check notice: {e}")
+
     try:
         db = SessionLocal()
         try:

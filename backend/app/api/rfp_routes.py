@@ -1,6 +1,7 @@
 import os
 import uuid
 import shutil
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
@@ -14,6 +15,24 @@ from app.services.storage_service import StorageService
 from app.core.config import settings
 
 router = APIRouter(prefix="/api/rfp", tags=["RFP Documents"])
+
+RUNNING_WORKFLOW_STATUSES = {
+    "PROCESSING",
+    "EXTRACTING",
+    "CLASSIFYING",
+    "ANALYZING_COMPLIANCE",
+    "ASSESSING_RISKS",
+    "WRITING_PROPOSAL",
+    "REVISING",
+    "REVIEWING",
+    "RESUMING",
+    "ANALYZING",
+}
+
+PROTECTED_PROJECT_STATUSES = {
+    "APPROVED_FOR_EXPORT",
+    "COMPLETED",
+}
 
 @router.post("/upload", response_model=RFPUploadResponse)
 async def upload_rfp(
@@ -60,9 +79,12 @@ async def upload_rfp(
     )
 
 @router.get("", response_model=List[dict])
-def list_rfps(db: Session = Depends(get_db)):
-    """Lists all RFPs registered in the system."""
-    records = db.query(RFPDocument).order_by(RFPDocument.created_at.desc()).all()
+def list_rfps(include_archived: bool = False, db: Session = Depends(get_db)):
+    """Lists all RFPs registered in the system. Excludes archived RFPs by default."""
+    query = db.query(RFPDocument)
+    if not include_archived:
+        query = query.filter(RFPDocument.archived_at.is_(None))
+    records = query.order_by(RFPDocument.created_at.desc()).all()
     return [
         {
             "id": r.id,
@@ -71,10 +93,68 @@ def list_rfps(db: Session = Depends(get_db)):
             "issuer": r.issuer,
             "page_count": r.page_count,
             "status": r.status,
-            "created_at": r.created_at.isoformat()
+            "created_at": r.created_at.isoformat(),
+            "archived_at": r.archived_at.isoformat() if r.archived_at else None,
         }
         for r in records
     ]
+
+@router.post("/{rfp_id}/archive")
+def archive_rfp(rfp_id: str, db: Session = Depends(get_db)):
+    """
+    Safely archives an inactive, rejected, aborted, or stale RFP project.
+    Prevents archiving actively executing pipelines or approved/completed projects.
+    """
+    rfp = db.query(RFPDocument).filter(RFPDocument.id == rfp_id).first()
+    if not rfp:
+        raise HTTPException(status_code=404, detail="RFP not found")
+    
+    current_status = (rfp.status or "").upper()
+    if current_status in RUNNING_WORKFLOW_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot archive RFP while workflow is actively executing (status: {rfp.status})."
+        )
+    
+    if current_status in PROTECTED_PROJECT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot archive approved/completed project (status: {rfp.status})."
+        )
+    
+    if rfp.archived_at is not None:
+        return {
+            "id": rfp.id,
+            "message": "RFP is already archived.",
+            "archived_at": rfp.archived_at.isoformat()
+        }
+    
+    rfp.archived_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(rfp)
+    return {
+        "id": rfp.id,
+        "message": "RFP project archived successfully.",
+        "archived_at": rfp.archived_at.isoformat()
+    }
+
+@router.post("/{rfp_id}/unarchive")
+def unarchive_rfp(rfp_id: str, db: Session = Depends(get_db)):
+    """
+    Restores an archived RFP project back to the active list.
+    """
+    rfp = db.query(RFPDocument).filter(RFPDocument.id == rfp_id).first()
+    if not rfp:
+        raise HTTPException(status_code=404, detail="RFP not found")
+    
+    rfp.archived_at = None
+    db.commit()
+    db.refresh(rfp)
+    return {
+        "id": rfp.id,
+        "message": "RFP project unarchived successfully.",
+        "archived_at": None
+    }
 
 @router.get("/{rfp_id}")
 def get_rfp_details(rfp_id: str, db: Session = Depends(get_db)):
@@ -96,6 +176,7 @@ def get_rfp_details(rfp_id: str, db: Session = Depends(get_db)):
         "page_count": rfp.page_count,
         "status": rfp.status,
         "created_at": rfp.created_at.isoformat(),
+        "archived_at": rfp.archived_at.isoformat() if rfp.archived_at else None,
         "summary_counts": {
             "requirements": req_count,
             "risks": risk_count,

@@ -65,6 +65,7 @@ export interface RFPDocumentSummary {
   page_count: number;
   status: string;
   created_at: string;
+  archived_at?: string | null;
   submission_deadline?: string;
   summary_counts?: {
     requirements: number;

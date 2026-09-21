@@ -36,10 +36,31 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
+from sqlalchemy import text
+
+def ensure_schema_migrations(bind_engine):
+    """
+    Safely runs idempotent schema additions across PostgreSQL and SQLite
+    for columns introduced in incremental updates.
+    """
+    url_str = str(bind_engine.url).lower()
+    with bind_engine.begin() as conn:
+        if "sqlite" in url_str:
+            # Check if archived_at column exists in rfp_documents
+            res = conn.execute(text("PRAGMA table_info(rfp_documents);")).fetchall()
+            col_names = [r[1] for r in res] if res else []
+            if col_names and "archived_at" not in col_names:
+                conn.execute(text("ALTER TABLE rfp_documents ADD COLUMN archived_at DATETIME;"))
+        else:
+            # PostgreSQL / Supabase
+            conn.execute(text("ALTER TABLE rfp_documents ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP WITH TIME ZONE;"))
+
+
 def get_db():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
 
