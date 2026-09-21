@@ -1,0 +1,38 @@
+REQUEST FOR PROPOSAL (RFP)
+DOCUMENT REF: RFP-NTSCA-2026-CLOUD-088
+ISSUED BY: National Transit & Supply Chain Authority (NTSCA)
+TITLE: Enterprise Cloud Modernization & Distributed Logistics Platform
+DUE DATE: November 15, 2026 at 5:00 PM EST
+
+SECTION 1: EXECUTIVE SUMMARY & PROCUREMENT OBJECTIVE
+The National Transit & Supply Chain Authority (NTSCA) invites proposals from qualified cloud software vendors to deliver a modern, secure, and highly available cloud platform. The platform will orchestrate real-time freight tracking, departmental inventory workflows, and vendor analytics across 12 regional distribution hubs.
+
+SECTION 2: TECHNICAL & INFRASTRUCTURE REQUIREMENTS
+2.1 High Availability & SLA: The proposed cloud platform SHALL maintain a monthly service uptime of no less than 99.95% excluding pre-scheduled maintenance windows.
+2.2 Disaster Recovery: The vendor MUST provide automated cross-region database replication with a documented Recovery Time Objective (RTO) of less than 30 minutes and Recovery Point Objective (RPO) of less than 15 minutes.
+2.3 Containerized Scalability: The system MUST support automated horizontal scaling to handle peak transit demand of up to 10,000 concurrent active users.
+2.4 API Integration: The vendor SHALL provide documented RESTful APIs supporting JSON payload serialization for integration with legacy SAP and mainframe dispatch systems.
+
+SECTION 3: INFORMATION SECURITY & COMPLIANCE REQUIREMENTS
+3.1 Compliance Certifications: The vendor MUST hold an active SOC2 Type II certification and an ISO/IEC 27001:2022 certification covering all hosting environments.
+3.2 Cryptographic Safeguards: All sensitive customer data SHALL be encrypted using AES-256 for data-at-rest and TLS 1.3 for all data-in-transit.
+3.3 Authentication & SSO: The platform MUST integrate natively with Okta and SAML 2.0 Identity Providers, enforcing mandatory multi-factor authentication for administrative users.
+3.4 Data Sovereignty: All transaction logs and telemetry data SHALL reside exclusively within sovereign Australian cloud infrastructure (Sydney/Melbourne regions).
+
+SECTION 4: FUNCTIONAL & USER WORKFLOW REQUIREMENTS
+4.1 Real-Time Dashboard: The system SHALL provide an interactive web dashboard displaying shipment status, transit delay alerts, and vehicle telemetry.
+4.2 Role-Based Access Control: The platform MUST support role-based access control with granular permissions for Dispatchers, Station Managers, and Compliance Auditors.
+4.3 Export & Reporting: The system MUST allow administrative users to export audit trails and operational reports in CSV and PDF formats.
+
+SECTION 5: LEGAL, RISK & COMMERCIAL TERMS
+5.1 Unlimited Liability: The contractor SHALL agree to unlimited liability for any data loss, service interruption, or operational delay caused by platform outages.
+5.2 Service Level Penalty: Any single outage exceeding 15 minutes in duration SHALL result in an immediate 10% penalty deduction from the monthly service invoice.
+5.3 Implementation Timeline: Complete platform migration and user acceptance testing MUST be concluded within 24 weeks of contract award.
+
+SECTION 6: PROPOSAL SUBMISSION & EVALUATION CRITERIA
+Proposals will be evaluated based on:
+1. Technical Architecture & SLA Guarantees (30%)
+2. Security & Compliance Verification (25%)
+3. Past Performance & Verified Case Studies (20%)
+4. Implementation Methodology & Timeline (15%)
+5. Cost & Commercial Terms (10%)

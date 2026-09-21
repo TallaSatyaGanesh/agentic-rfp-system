@@ -39,10 +39,18 @@ class StorageService:
         return f"{base_url}/storage/v1/object/{bucket}/{clean_path}"
 
     @classmethod
+    def _sanitize_log_message(cls, message: str) -> str:
+        """Removes any accidental occurrences of SUPABASE_KEY from log messages."""
+        if settings.SUPABASE_KEY and settings.SUPABASE_KEY in message:
+            return message.replace(settings.SUPABASE_KEY, "[REDACTED]")
+        return message
+
+    @classmethod
     def upload_rfp_document(cls, rfp_id: str, filename: str, content_bytes: bytes) -> str:
         """
         Saves uploaded RFP document to local staging path and syncs to Supabase Storage if enabled.
         Returns the canonical local file path for immediate parsing.
+        Raises an exception if Supabase is enabled and the remote upload fails.
         """
         # 1. Local staging write
         local_dir = os.path.join(settings.UPLOAD_DIR, "rfp", rfp_id)
@@ -52,14 +60,13 @@ class StorageService:
         with open(local_path, "wb") as f:
             f.write(content_bytes)
 
-        # 2. Remote Supabase Storage sync
+        # 2. Remote Supabase Storage sync (only if Supabase is enabled)
         if cls.is_supabase_enabled():
             remote_path = f"rfps/{rfp_id}/{filename}"
-            try:
-                cls._upload_to_supabase(remote_path, content_bytes)
-                logger.info(f"[StorageService] Successfully synced RFP {rfp_id} to Supabase Storage: {remote_path}")
-            except Exception as e:
-                logger.error(f"[StorageService] Failed to sync RFP to Supabase Storage: {e}")
+            cls._upload_to_supabase(remote_path, content_bytes)
+            logger.info(
+                f"[StorageService] Successfully synced RFP {rfp_id} ({filename}) to Supabase Storage: {remote_path}"
+            )
 
         return local_path
 
@@ -68,6 +75,7 @@ class StorageService:
         """
         Saves proposal DOCX export locally and syncs to Supabase Storage if enabled.
         Returns the remote path or local path.
+        Raises an exception if Supabase is enabled and the remote upload fails.
         """
         local_path = os.path.join(settings.EXPORT_DIR, filename)
         os.makedirs(settings.EXPORT_DIR, exist_ok=True)
@@ -77,12 +85,11 @@ class StorageService:
 
         if cls.is_supabase_enabled():
             remote_path = f"exports/{filename}"
-            try:
-                cls._upload_to_supabase(remote_path, content_bytes)
-                logger.info(f"[StorageService] Successfully archived proposal export to Supabase Storage: {remote_path}")
-                return remote_path
-            except Exception as e:
-                logger.error(f"[StorageService] Failed to archive proposal export to Supabase Storage: {e}")
+            cls._upload_to_supabase(remote_path, content_bytes)
+            logger.info(
+                f"[StorageService] Successfully archived proposal export ({filename}) to Supabase Storage: {remote_path}"
+            )
+            return remote_path
 
         return local_path
 
@@ -114,16 +121,24 @@ class StorageService:
                 if downloaded_bytes:
                     with open(target_path, "wb") as f:
                         f.write(downloaded_bytes)
-                    logger.info(f"[StorageService] Recovered RFP {rfp_id} from Supabase Storage to local cache: {target_path}")
+                    logger.info(
+                        f"[StorageService] Recovered RFP {rfp_id} from Supabase Storage to local cache: {target_path}"
+                    )
                     return target_path
             except Exception as e:
-                logger.error(f"[StorageService] Error recovering file from Supabase Storage ({remote_path}): {e}")
+                err_str = cls._sanitize_log_message(f"{type(e).__name__}: {str(e)}")
+                logger.error(
+                    f"[StorageService] Error recovering file from Supabase Storage ({remote_path}): {err_str}"
+                )
 
         return None
 
     @classmethod
     def _upload_to_supabase(cls, remote_path: str, content_bytes: bytes) -> bool:
-        """Internal helper: Uploads bytes to Supabase Storage object endpoint."""
+        """
+        Internal helper: Uploads bytes to Supabase Storage object endpoint.
+        Raises a RuntimeError containing the HTTP status and response body if status is not 200 or 201.
+        """
         url = cls._build_storage_url(remote_path)
         headers = cls.get_headers()
         headers["x-upsert"] = "true"
@@ -145,8 +160,12 @@ class StorageService:
             if res.status_code in [200, 201]:
                 return True
             else:
-                logger.warning(f"[StorageService] Supabase Storage upload returned HTTP {res.status_code}: {res.text}")
-                return False
+                err_msg = cls._sanitize_log_message(
+                    f"Supabase Storage upload failed for '{remote_path}' "
+                    f"with HTTP {res.status_code}: {res.text}"
+                )
+                logger.error(f"[StorageService] {err_msg}")
+                raise RuntimeError(err_msg)
 
     @classmethod
     def _download_from_supabase(cls, remote_path: str) -> Optional[bytes]:
@@ -159,5 +178,9 @@ class StorageService:
             if res.status_code == 200:
                 return res.content
             else:
-                logger.warning(f"[StorageService] Supabase Storage download returned HTTP {res.status_code}: {res.text}")
+                err_msg = cls._sanitize_log_message(
+                    f"Supabase Storage download for '{remote_path}' "
+                    f"returned HTTP {res.status_code}: {res.text}"
+                )
+                logger.warning(f"[StorageService] {err_msg}")
                 return None
