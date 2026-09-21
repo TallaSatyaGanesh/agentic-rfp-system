@@ -445,6 +445,318 @@ def test_12_reopening_rfp_preserves_gate1_metrics():
 
         status = client.get("/api/workflow/rfp_reopen_test/status").json()
         assert status["status"] == "AWAITING_GO_NOGO"
+        assert status["is_interrupted"] is True
+        assert status["interrupt_type"] == "GO_NOGO"
     finally:
         wf_routes.SessionLocal = orig_session_local
 
+
+def test_13_gate1_recovery_when_checkpoint_missing():
+    """Validates that Gate 1 can be resumed (GO) even if in-memory checkpointer lost state."""
+    import app.api.workflow_routes as wf_routes
+    from app.agents.graph import checkpointer
+    orig_session_local = wf_routes.SessionLocal
+    wf_routes.SessionLocal = TestingSessionLocal
+
+    try:
+        db = TestingSessionLocal()
+        rfp_id = "rfp_recon_gate1_test"
+        rfp = RFPDocument(
+            id=rfp_id,
+            title="Gate 1 Lost Checkpoint RFP",
+            filename="gate1_lost.pdf",
+            file_path="gate1_lost.pdf",
+            status="AWAITING_GO_NOGO"
+        )
+        db.add(rfp)
+        db.commit()
+
+        mock_state = {
+            "workflow_status": "AWAITING_GO_NOGO",
+            "overall_compliance_score": 88.0,
+            "requirements": [
+                {"req_code": "REQ-001", "category": "Technical", "priority": "High", "is_mandatory": True, "text": "Requirement 1"}
+            ],
+            "compliance_matrix": [
+                {"req_code": "REQ-001", "status": "COMPLIANT", "confidence": 0.95, "evidence_text": "Evidence 1"}
+            ],
+            "risks": [
+                {"category": "Operational", "severity": "MEDIUM", "description": "Risk 1"}
+            ]
+        }
+        wf_routes._persist_workflow_results_to_db(rfp_id, mock_state)
+
+        # Explicitly ensure in-memory checkpointer has no state for this thread (simulate restart)
+        if hasattr(checkpointer, "storage") and rfp_id in checkpointer.storage:
+            del checkpointer.storage[rfp_id]
+
+        # Verify status endpoint returns interrupted state from DB
+        status_res = client.get(f"/api/workflow/{rfp_id}/status")
+        assert status_res.status_code == 200
+        st = status_res.json()
+        assert st["status"] == "AWAITING_GO_NOGO"
+        assert st["is_interrupted"] is True
+        assert st["interrupt_type"] == "GO_NOGO"
+
+        # Resume Gate 1 with GO decision
+        resume_res = client.post(
+            f"/api/workflow/{rfp_id}/resume",
+            json={"decision": "GO", "notes": "Proceeding with proposal generation"}
+        )
+        assert resume_res.status_code == 200
+        assert "Human input accepted" in resume_res.json()["message"]
+    finally:
+        wf_routes.SessionLocal = orig_session_local
+
+
+def test_14_gate1_with_active_checkpoint_happy_path():
+    """Validates that existing happy-path works normally when checkpoint is present."""
+    import app.api.workflow_routes as wf_routes
+    from app.agents.graph import rfp_graph
+    orig_session_local = wf_routes.SessionLocal
+    wf_routes.SessionLocal = TestingSessionLocal
+
+    try:
+        db = TestingSessionLocal()
+        rfp_id = "rfp_happy_gate1_test"
+        rfp = RFPDocument(
+            id=rfp_id,
+            title="Happy Gate 1 RFP",
+            filename="happy1.pdf",
+            file_path="happy1.pdf",
+            status="AWAITING_GO_NOGO"
+        )
+        db.add(rfp)
+        db.commit()
+
+        # Pre-populate state in checkpointer
+        config = {"configurable": {"thread_id": rfp_id}}
+        rfp_graph.update_state(config, {
+            "rfp_id": rfp_id,
+            "workflow_status": "AWAITING_GO_NOGO",
+            "requirements": [{"req_code": "REQ-1", "text": "T"}],
+            "compliance_matrix": [{"req_code": "REQ-1", "status": "COMPLIANT"}],
+            "risks": []
+        }, as_node="assess_risks")
+
+        # Resume Gate 1 with GO
+        res = client.post(
+            f"/api/workflow/{rfp_id}/resume",
+            json={"decision": "GO", "notes": "All good"}
+        )
+        assert res.status_code == 200
+        assert "Human input accepted" in res.json()["message"]
+    finally:
+        wf_routes.SessionLocal = orig_session_local
+
+
+def test_15_gate2_recovery_when_checkpoint_missing():
+    """Validates that Gate 2 can be resumed (APPROVED) even if in-memory checkpointer lost state."""
+    import app.api.workflow_routes as wf_routes
+    from app.agents.graph import checkpointer
+    orig_session_local = wf_routes.SessionLocal
+    wf_routes.SessionLocal = TestingSessionLocal
+
+    try:
+        db = TestingSessionLocal()
+        rfp_id = "rfp_recon_gate2_test"
+        rfp = RFPDocument(
+            id=rfp_id,
+            title="Gate 2 Lost Checkpoint RFP",
+            filename="gate2_lost.pdf",
+            file_path="gate2_lost.pdf",
+            status="AWAITING_FINAL_APPROVAL"
+        )
+        db.add(rfp)
+        db.commit()
+
+        mock_state = {
+            "workflow_status": "AWAITING_FINAL_APPROVAL",
+            "overall_compliance_score": 95.0,
+            "requirements": [
+                {"req_code": "REQ-001", "category": "Technical", "priority": "High", "is_mandatory": True, "text": "Requirement 1"}
+            ],
+            "compliance_matrix": [
+                {"req_code": "REQ-001", "status": "COMPLIANT", "confidence": 0.95, "evidence_text": "Evidence 1"}
+            ],
+            "risks": [],
+            "proposal_drafts": [
+                {
+                    "version": 1,
+                    "title": "Complete Proposal Response",
+                    "executive_summary": "Executive summary text.",
+                    "full_markdown": "# Proposal\nFull details."
+                }
+            ],
+            "review_reports": [
+                {
+                    "overall_score": 92,
+                    "overall_status": "APPROVED",
+                    "feedback": "Ready for client submission."
+                }
+            ]
+        }
+        wf_routes._persist_workflow_results_to_db(rfp_id, mock_state)
+
+        # Clear in-memory checkpoint (simulate restart)
+        if hasattr(checkpointer, "storage") and rfp_id in checkpointer.storage:
+            del checkpointer.storage[rfp_id]
+
+        # Verify status endpoint returns interrupted state from DB
+        status_res = client.get(f"/api/workflow/{rfp_id}/status")
+        assert status_res.status_code == 200
+        st = status_res.json()
+        assert st["status"] == "AWAITING_FINAL_APPROVAL"
+        assert st["is_interrupted"] is True
+        assert st["interrupt_type"] == "FINAL_APPROVAL"
+
+        # Resume Gate 2 with APPROVED decision
+        resume_res = client.post(
+            f"/api/workflow/{rfp_id}/resume",
+            json={"decision": "APPROVED", "feedback": "Final sign-off granted"}
+        )
+        assert resume_res.status_code == 200
+        assert "Human input accepted" in resume_res.json()["message"]
+    finally:
+        wf_routes.SessionLocal = orig_session_local
+
+
+def test_16_missing_checkpoint_non_human_gate_returns_400():
+    """Validates that missing checkpoint with non-human-gate status returns HTTP 400."""
+    import app.api.workflow_routes as wf_routes
+    from app.agents.graph import checkpointer
+    orig_session_local = wf_routes.SessionLocal
+    wf_routes.SessionLocal = TestingSessionLocal
+
+    try:
+        db = TestingSessionLocal()
+        rfp_id = "rfp_non_gate_fail_test"
+        rfp = RFPDocument(
+            id=rfp_id,
+            title="Processing RFP",
+            filename="proc.pdf",
+            file_path="proc.pdf",
+            status="PROCESSING"
+        )
+        db.add(rfp)
+        db.commit()
+
+        if hasattr(checkpointer, "storage") and rfp_id in checkpointer.storage:
+            del checkpointer.storage[rfp_id]
+
+        res = client.post(
+            f"/api/workflow/{rfp_id}/resume",
+            json={"decision": "GO"}
+        )
+        assert res.status_code == 400
+        assert "Workflow is not currently awaiting human input" in res.json()["detail"]
+    finally:
+        wf_routes.SessionLocal = orig_session_local
+
+
+def test_17_recovery_does_not_duplicate_records():
+    """Validates that state reconstruction and repeated persistence do not duplicate DB records."""
+    import app.api.workflow_routes as wf_routes
+    from app.db.models import Requirement, RiskRecord, ClarificationQuestion
+    orig_session_local = wf_routes.SessionLocal
+    wf_routes.SessionLocal = TestingSessionLocal
+
+    try:
+        db = TestingSessionLocal()
+        rfp_id = "rfp_no_dups_test"
+        rfp = RFPDocument(
+            id=rfp_id,
+            title="No Duplicates RFP",
+            filename="no_dups.pdf",
+            file_path="no_dups.pdf",
+            status="AWAITING_GO_NOGO"
+        )
+        db.add(rfp)
+        db.commit()
+
+        mock_state = {
+            "workflow_status": "AWAITING_GO_NOGO",
+            "overall_compliance_score": 90.0,
+            "requirements": [
+                {"req_code": "REQ-001", "category": "Technical", "priority": "High", "is_mandatory": True, "text": "Requirement 1"},
+                {"req_code": "REQ-002", "category": "Security", "priority": "High", "is_mandatory": True, "text": "Requirement 2"}
+            ],
+            "compliance_matrix": [
+                {"req_code": "REQ-001", "status": "COMPLIANT", "confidence": 0.95, "evidence_text": "Evidence 1"},
+                {"req_code": "REQ-002", "status": "COMPLIANT", "confidence": 0.90, "evidence_text": "Evidence 2"}
+            ],
+            "risks": [
+                {"category": "Operational", "severity": "MEDIUM", "description": "Risk 1"},
+                {"category": "Technical", "severity": "LOW", "description": "Risk 2"}
+            ],
+            "clarification_questions": [
+                {"q_number": 1, "rfp_section_reference": "General", "question_text": "Question 1", "rationale": "Rationale 1"}
+            ]
+        }
+        # Initial persist
+        wf_routes._persist_workflow_results_to_db(rfp_id, mock_state)
+
+        # Reconstruct from DB
+        recon_state, target_node = wf_routes._reconstruct_state_from_db(rfp_id, db, rfp)
+        assert recon_state is not None
+        assert target_node == "assess_risks"
+        assert len(recon_state["requirements"]) == 2
+        assert len(recon_state["risks"]) == 2
+        assert len(recon_state["clarification_questions"]) == 1
+
+        # Re-persist reconstructed state
+        wf_routes._persist_workflow_results_to_db(rfp_id, recon_state)
+
+        # Verify DB row counts did not duplicate
+        req_count = db.query(Requirement).filter(Requirement.rfp_id == rfp_id).count()
+        risk_count = db.query(RiskRecord).filter(RiskRecord.rfp_id == rfp_id).count()
+        q_count = db.query(ClarificationQuestion).filter(ClarificationQuestion.rfp_id == rfp_id).count()
+
+        assert req_count == 2
+        assert risk_count == 2
+        assert q_count == 1
+    finally:
+        wf_routes.SessionLocal = orig_session_local
+
+
+def test_18_gate1_recovery_exact_node_execution_trace():
+    """Validates that Gate 1 recovery routes directly to write_proposal or abort_workflow without re-running extract/assess."""
+    from app.agents.graph import rfp_graph
+
+    config = {"configurable": {"thread_id": "test_node_trace_gate1"}}
+    reconstructed = {
+        "rfp_id": "test_node_trace_gate1",
+        "file_path": "dummy.pdf",
+        "metadata": {"title": "Test RFP"},
+        "requirements": [{"req_code": "REQ-1", "text": "test"}],
+        "compliance_matrix": [{"req_code": "REQ-1", "status": "COMPLIANT"}],
+        "risks": [{"category": "Tech", "severity": "HIGH", "description": "Risk 1"}],
+        "clarification_questions": [],
+        "workflow_status": "AWAITING_GO_NOGO",
+        "go_nogo_decision": "NO_GO",
+        "go_nogo_notes": "Aborting for test",
+        "current_version": 0,
+        "revision_count": 0,
+        "max_revisions": 2,
+        "proposal_drafts": [],
+        "review_reports": [],
+        "logs": []
+    }
+
+    # Inject with target_node='assess_risks'
+    rfp_graph.update_state(config, reconstructed, as_node="assess_risks")
+    state = rfp_graph.get_state(config)
+    assert state.next == ("human_go_nogo_gate",)
+
+    executed_nodes = []
+    for output in rfp_graph.stream(None, config, stream_mode="updates"):
+        if isinstance(output, dict):
+            for node_name in output.keys():
+                if node_name != "__interrupt__":
+                    executed_nodes.append(node_name)
+
+    assert executed_nodes == ["human_go_nogo_gate", "abort_workflow"]
+    assert "extract_rfp" not in executed_nodes
+    assert "assess_risks" not in executed_nodes
+    assert "analyze_compliance" not in executed_nodes
+    assert "classify_requirements" not in executed_nodes
