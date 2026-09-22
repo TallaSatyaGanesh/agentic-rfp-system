@@ -410,7 +410,7 @@ def _reconstruct_state_from_db(
                 pass
 
     current_version = max([p.version for p in p_records], default=0)
-    revision_count = len(review_reports)
+    revision_count = max(0, current_version - 1)
 
     # 5. Determine target checkpoint node based on RFP status
     if rfp.status == "AWAITING_GO_NOGO":
@@ -492,7 +492,7 @@ def get_workflow_status(rfp_id: str, db: Session = Depends(get_db)):
             "is_interrupted": is_interrupted,
             "interrupt_type": interrupt_type,
             "current_version": current_version,
-            "revision_count": 0,
+            "revision_count": max(0, current_version - 1),
             "compliance_score": comp_score,
             "logs": []
         }
@@ -514,7 +514,7 @@ def get_workflow_status(rfp_id: str, db: Session = Depends(get_db)):
         "is_interrupted": is_interrupted,
         "interrupt_type": interrupt_type,
         "current_version": state.values.get("current_version", 0),
-        "revision_count": state.values.get("revision_count", 0),
+        "revision_count": max(state.values.get("revision_count", 0), max(0, state.values.get("current_version", 0) - 1)),
         "compliance_score": state.values.get("overall_compliance_score", 0.0),
         "logs": state.values.get("logs", [])[-10:]
     }

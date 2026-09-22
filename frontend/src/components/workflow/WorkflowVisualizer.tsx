@@ -56,7 +56,7 @@ export const WorkflowVisualizer: React.FC<Props> = ({
   const isInterrupted = status?.is_interrupted || false;
   const interruptType = status?.interrupt_type;
   const currentVersion = status?.current_version || 0;
-  const revisionCount = status?.revision_count || 0;
+  const revisionCount = Math.max(status?.revision_count || 0, Math.max(0, currentVersion - 1));
 
   const isHumanReviewRequired = workflowStatus === 'HUMAN_REVIEW_REQUIRED';
   const isAwaitingAction =

@@ -42,7 +42,7 @@ def review_proposal_node(state: RFPProposalState) -> Dict[str, Any]:
 
     latest_draft = drafts[-1]
     current_version = latest_draft.get("version", state.get("current_version", 1))
-    revision_count = state.get("revision_count", 0)
+    revision_count = max(state.get("revision_count", 0), max(0, current_version - 1))
     max_revisions = state.get("max_revisions", settings.MAX_REVISION_CYCLES)
     requirements = state.get("requirements", [])
     compliance_matrix = state.get("compliance_matrix", [])

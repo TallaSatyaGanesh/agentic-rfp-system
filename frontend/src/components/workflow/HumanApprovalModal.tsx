@@ -93,6 +93,9 @@ export const HumanApprovalModal: React.FC<Props> = ({
     status.status === 'HUMAN_REVIEW_REQUIRED' ||
     reviewReport?.overall_status === 'HUMAN_REVIEW_REQUIRED';
 
+  const currentVersion = status.current_version || latestProposal?.version || 1;
+  const revisionCount = Math.max(status.revision_count ?? 0, Math.max(0, currentVersion - 1));
+
   // Extract metrics for Gate 1
   const complianceScore = status.compliance_score ?? 0;
   const criticalRisks = risks.filter((r) => (r.severity || '').toUpperCase() === 'CRITICAL');
@@ -105,6 +108,22 @@ export const HumanApprovalModal: React.FC<Props> = ({
   const otherFindings: ReviewFinding[] = allFindings.filter(
     (f) => (f.severity || '').toUpperCase() !== 'CRITICAL' && (f.severity || '').toUpperCase() !== 'HIGH'
   );
+
+  const getEscalationSubtitle = () => {
+    if (isGoNoGo) {
+      return 'Mandatory qualification checkpoint prior to proposal authoring';
+    }
+    if (isHumanReviewRequired) {
+      if (revisionCount >= 2) {
+        return `Maximum automated revision limit reached (Cycle ${revisionCount}/2). Human decision required.`;
+      }
+      if (criticalFindings.length > 0) {
+        return `Reviewer identified ${criticalFindings.length} critical finding(s). Human evaluation required.`;
+      }
+      return 'Human evaluation and sign-off required for this proposal revision.';
+    }
+    return 'Red Team critique completed. Executive authorization required for export release.';
+  };
 
   const toggleFindingExpanded = (findingId: string) => {
     setExpandedFindings((prev) => ({
@@ -187,11 +206,7 @@ export const HumanApprovalModal: React.FC<Props> = ({
                   : 'Human Gate 2: Final Proposal Sign-Off'}
               </h3>
               <p className="text-xs text-white/90 mt-0.5">
-                {isGoNoGo
-                  ? 'Mandatory qualification checkpoint prior to proposal authoring'
-                  : isHumanReviewRequired
-                  ? 'Critical findings or automated revision limit reached (Cycle 2/2). Human decision required.'
-                  : 'Red Team critique completed. Executive authorization required for export release.'}
+                {getEscalationSubtitle()}
               </p>
             </div>
           </div>
@@ -347,7 +362,7 @@ export const HumanApprovalModal: React.FC<Props> = ({
                     Revision Cycle
                   </span>
                   <span className="text-xl font-black text-purple-700 mt-1 block">
-                    {status.revision_count}/2
+                    {revisionCount}/2
                   </span>
                 </div>
               </div>

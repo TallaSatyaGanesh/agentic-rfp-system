@@ -6,7 +6,11 @@ from app.agents.reviewer_agent import (
     _run_deterministic_review_checks
 )
 from app.agents.writer_agent import write_proposal_node
-from app.agents.graph import route_review_outcome
+from app.agents.graph import (
+    route_review_outcome,
+    human_final_approval_gate,
+    route_final_approval
+)
 from app.agents.state import RFPProposalState
 from app.models.schemas import (
     ProposalDraft,
@@ -818,3 +822,186 @@ def test_reviewer_does_not_invent_company_facts():
     assert "we hold fedramp" not in all_reviewer_text.lower()
     assert "company is fedramp certified" not in all_reviewer_text.lower()
     assert "platform supports fedramp" not in all_reviewer_text.lower()
+
+
+# ==============================================================================
+# TEST 17: Revision cycle progression from v1 to v2 to v3 with APPROVED v2 preserving cycle 1
+# ==============================================================================
+def test_revision_cycle_progression_from_v1_to_v2_to_v3():
+    reqs = [{
+        "req_code": "REQ-01",
+        "text": "The platform must support automated daily encrypted backups.",
+        "category": "Technical",
+        "is_mandatory": True,
+        "source_page": 4,
+        "source_section": "Storage"
+    }]
+    comp = [{
+        "req_code": "REQ-01",
+        "status": "COMPLIANT",
+        "evidence_text": "Platform performs automated daily encrypted backups retained for 30 days.",
+        "company_source_doc": "Acme Backup Specification",
+        "company_doc_id": "doc_backup_01",
+        "chunk_id": "chk_01",
+        "citations": [{
+            "document_title": "Acme Backup Specification",
+            "company_doc_id": "doc_backup_01",
+            "chunk_id": "chk_01",
+            "snippet": "Platform performs automated daily encrypted backups retained for 30 days."
+        }]
+    }]
+    responses = [RequirementResponse(
+        requirement_id="REQ-01",
+        requirement_text="The platform must support automated daily encrypted backups.",
+        category="Technical",
+        is_mandatory=True,
+        compliance_status="COMPLIANT",
+        response_type="COMPLIANT_RESPONSE",
+        response="The proposed solution fully supports this requirement based on verified company documentation. Specifically: Platform performs automated daily encrypted backups retained for 30 days. [Company: Acme Backup Specification]",
+        company_doc_id="doc_backup_01",
+        chunk_id="chk_01",
+        source_page=4,
+        source_section="Storage",
+        evidence_snippet="Platform performs automated daily encrypted backups retained for 30 days.",
+        citations=[{
+            "document_title": "Acme Backup Specification",
+            "company_doc_id": "doc_backup_01",
+            "chunk_id": "chk_01",
+            "snippet": "Platform performs automated daily encrypted backups retained for 30 days."
+        }]
+    )]
+
+    # 1. Proposal Draft v1 generation: initial proposal is Revision Cycle 0
+    state_v1: RFPProposalState = {
+        "metadata": {"title": "Test Cloud RFP"},
+        "requirements": reqs,
+        "compliance_matrix": comp,
+        "risks": [],
+        "clarification_questions": [],
+        "current_version": 0,
+        "revision_count": 0,
+        "proposal_drafts": [],
+        "review_reports": [],
+        "logs": []
+    }
+    writer_res_v1 = write_proposal_node(state_v1)
+    assert writer_res_v1["current_version"] == 1
+    assert writer_res_v1["revision_count"] == 0
+
+    # 2. Reviewer evaluation on v1 with simulated revision requirement
+    state_v1_rev: RFPProposalState = {
+        **state_v1,
+        "current_version": 1,
+        "revision_count": 0,
+        "proposal_drafts": writer_res_v1["proposal_drafts"]
+    }
+    reviewer_res_v1 = review_proposal_node(state_v1_rev)
+    # If approved with 100/100, revision_count remains 0; if REVISION_REQUIRED, increments to 1
+    assert reviewer_res_v1["revision_count"] in [0, 1]
+
+    # 3. Writer generates v2 after CHANGES_REQUESTED (Revision Cycle 1)
+    state_v2: RFPProposalState = {
+        **state_v1,
+        "current_version": 1,
+        "revision_count": 1,
+        "proposal_drafts": writer_res_v1["proposal_drafts"],
+        "review_reports": reviewer_res_v1["review_reports"]
+    }
+    writer_res_v2 = write_proposal_node(state_v2)
+    assert writer_res_v2["current_version"] == 2
+    assert writer_res_v2["revision_count"] == 1
+
+    # 4. Reviewer evaluates v2: when v2 is APPROVED (score 100/100), revision_count MUST REMAIN 1 (NOT 0)
+    draft_v2 = _build_test_draft(responses, version=2)
+    state_v2_rev: RFPProposalState = {
+        **state_v2,
+        "current_version": 2,
+        "revision_count": 1,
+        "proposal_drafts": [draft_v2.model_dump()]
+    }
+    reviewer_res_v2 = review_proposal_node(state_v2_rev)
+    assert reviewer_res_v2["review_reports"][-1]["score"] == 100
+    assert reviewer_res_v2["review_reports"][-1]["overall_status"] == "APPROVED"
+    assert reviewer_res_v2["revision_count"] == 1, "Approved Proposal v2 must preserve revision_count = 1"
+    assert reviewer_res_v2["workflow_status"] == "AWAITING_FINAL_APPROVAL"
+
+    # 5. Writer generates v3 after second CHANGES_REQUESTED (Revision Cycle 2 - max limit)
+    state_v3: RFPProposalState = {
+        **state_v2,
+        "current_version": 2,
+        "revision_count": 2,
+        "proposal_drafts": state_v2_rev["proposal_drafts"]
+    }
+    writer_res_v3 = write_proposal_node(state_v3)
+    assert writer_res_v3["current_version"] == 3
+    assert writer_res_v3["revision_count"] == 2
+
+
+# ==============================================================================
+# TEST 18: Human Gate CHANGES_REQUESTED routing and max revision boundary
+# ==============================================================================
+def test_human_gate_changes_requested_and_max_revision_limit():
+    # A. Cycle 0 (v1): CHANGES_REQUESTED -> routes to write_proposal
+    state_gate_v1: RFPProposalState = {
+        "current_version": 1,
+        "revision_count": 0,
+        "max_revisions": 2,
+        "final_approval_decision": "CHANGES_REQUESTED"
+    }
+    gate_res_v1 = human_final_approval_gate(state_gate_v1)
+    route_res_v1 = route_final_approval(state_gate_v1)
+    assert gate_res_v1["workflow_status"] == "WRITING_PROPOSAL"
+    assert route_res_v1 == "write_proposal"
+
+    # B. Cycle 1 (v2): CHANGES_REQUESTED -> routes to write_proposal
+    state_gate_v2: RFPProposalState = {
+        "current_version": 2,
+        "revision_count": 1,
+        "max_revisions": 2,
+        "final_approval_decision": "CHANGES_REQUESTED"
+    }
+    gate_res_v2 = human_final_approval_gate(state_gate_v2)
+    route_res_v2 = route_final_approval(state_gate_v2)
+    assert gate_res_v2["workflow_status"] == "WRITING_PROPOSAL"
+    assert route_res_v2 == "write_proposal"
+
+    # C. Cycle 2 (v3 - Max limit reached): CHANGES_REQUESTED -> routes to __end__ with HUMAN_REVIEW_REQUIRED
+    state_gate_v3: RFPProposalState = {
+        "current_version": 3,
+        "revision_count": 2,
+        "max_revisions": 2,
+        "final_approval_decision": "CHANGES_REQUESTED"
+    }
+    gate_res_v3 = human_final_approval_gate(state_gate_v3)
+    route_res_v3 = route_final_approval(state_gate_v3)
+    assert gate_res_v3["workflow_status"] == "HUMAN_REVIEW_REQUIRED"
+    assert route_res_v3 == "__end__"
+
+
+# ==============================================================================
+# TEST 19: Human Gate APPROVED and REJECTED decisions do not alter revision count
+# ==============================================================================
+def test_human_gate_approved_and_rejected_decisions():
+    # APPROVED
+    state_appr: RFPProposalState = {
+        "current_version": 2,
+        "revision_count": 1,
+        "max_revisions": 2,
+        "final_approval_decision": "APPROVED"
+    }
+    gate_appr = human_final_approval_gate(state_appr)
+    route_appr = route_final_approval(state_appr)
+    assert gate_appr["workflow_status"] == "APPROVED_FOR_EXPORT"
+    assert route_appr == "__end__"
+
+    # REJECTED
+    state_rej: RFPProposalState = {
+        "current_version": 2,
+        "revision_count": 1,
+        "max_revisions": 2,
+        "final_approval_decision": "REJECTED"
+    }
+    gate_rej = human_final_approval_gate(state_rej)
+    route_rej = route_final_approval(state_rej)
+    assert gate_rej["workflow_status"] == "REJECTED"
+    assert route_rej == "__end__"

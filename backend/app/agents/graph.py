@@ -56,7 +56,7 @@ def route_review_outcome(state: RFPProposalState) -> Literal["write_proposal", "
     else:
         needs_rev = latest_review.get("needs_revision", False)
 
-    rev_count = state.get("revision_count", 0)
+    rev_count = max(state.get("revision_count", 0), max(0, state.get("current_version", 1) - 1))
     max_rev = state.get("max_revisions", settings.MAX_REVISION_CYCLES)
 
     if needs_rev and rev_count < max_rev:
@@ -75,16 +75,25 @@ def human_final_approval_gate(state: RFPProposalState) -> Dict[str, Any]:
             "workflow_status": "AWAITING_FINAL_APPROVAL"
         }
 
+    rev_count = max(state.get("revision_count", 0), max(0, state.get("current_version", 1) - 1))
+    max_rev = state.get("max_revisions", settings.MAX_REVISION_CYCLES)
+
     if decision == "APPROVED":
         return {
             "active_agent": "Human Proposal Manager",
             "workflow_status": "APPROVED_FOR_EXPORT"
         }
     elif decision == "CHANGES_REQUESTED":
-        return {
-            "active_agent": "Human Proposal Manager",
-            "workflow_status": "WRITING_PROPOSAL"
-        }
+        if rev_count < max_rev:
+            return {
+                "active_agent": "Human Proposal Manager",
+                "workflow_status": "WRITING_PROPOSAL"
+            }
+        else:
+            return {
+                "active_agent": "Human Proposal Manager",
+                "workflow_status": "HUMAN_REVIEW_REQUIRED"
+            }
     else:
         return {
             "active_agent": "Human Proposal Manager",
@@ -92,7 +101,9 @@ def human_final_approval_gate(state: RFPProposalState) -> Dict[str, Any]:
         }
 
 def route_final_approval(state: RFPProposalState) -> Literal["write_proposal", "__end__"]:
-    if state.get("final_approval_decision") == "CHANGES_REQUESTED":
+    rev_count = max(state.get("revision_count", 0), max(0, state.get("current_version", 1) - 1))
+    max_rev = state.get("max_revisions", settings.MAX_REVISION_CYCLES)
+    if state.get("final_approval_decision") == "CHANGES_REQUESTED" and rev_count < max_rev:
         return "write_proposal"
     return "__end__"
 

@@ -166,6 +166,7 @@ def write_proposal_node(state: RFPProposalState) -> Dict[str, Any]:
     return {
         "proposal_drafts": state.get("proposal_drafts", []) + [draft.model_dump()],
         "current_version": current_version,
+        "revision_count": max(state.get("revision_count", 0), max(0, current_version - 1)),
         "active_agent": "Proposal Writer Agent",
         "workflow_status": "REVIEWING",
         "logs": state.get("logs", []) + [log_entry]

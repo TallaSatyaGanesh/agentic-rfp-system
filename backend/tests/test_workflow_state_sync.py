@@ -760,3 +760,87 @@ def test_18_gate1_recovery_exact_node_execution_trace():
     assert "assess_risks" not in executed_nodes
     assert "analyze_compliance" not in executed_nodes
     assert "classify_requirements" not in executed_nodes
+
+
+def test_19_gate2_recovery_and_status_preserves_revision_count():
+    """Validates that Gate 2 DB reconstruction and status endpoint correctly derive revision_count = max(0, version - 1)."""
+    from app.db.models import Requirement, ComplianceRecord, Proposal
+    db = TestingSessionLocal()
+    orig_session_local = wf_routes.SessionLocal
+    wf_routes.SessionLocal = TestingSessionLocal
+    try:
+        rfp_id = "test_gate2_rev_count_sync"
+        rfp = RFPDocument(
+            id=rfp_id,
+            title="Gate 2 Revision Sync RFP",
+            filename="test.pdf",
+            file_path="dummy.pdf",
+            status="AWAITING_FINAL_APPROVAL"
+        )
+        db.add(rfp)
+        db.commit()
+
+        req = Requirement(
+            id="req_sync_01",
+            rfp_id=rfp_id,
+            req_code="REQ-01",
+            category="Technical",
+            priority="High",
+            is_mandatory=True,
+            text="Cloud storage"
+        )
+        db.add(req)
+        db.commit()
+
+        comp = ComplianceRecord(
+            id="comp_sync_01",
+            requirement_id=req.id,
+            status="COMPLIANT",
+            confidence=0.95,
+            evidence_text="Cloud storage evidence"
+        )
+        db.add(comp)
+        db.commit()
+
+        # Add Proposal v1 and Proposal v2
+        p1 = Proposal(
+            id="prop_sync_01",
+            rfp_id=rfp_id,
+            version=1,
+            title="Proposal Draft v1",
+            executive_summary="Summary v1",
+            content_markdown="# v1",
+            review_score=90,
+            review_feedback_json='{"overall_status": "REVISION_REQUIRED", "score": 90, "findings": []}'
+        )
+        p2 = Proposal(
+            id="prop_sync_02",
+            rfp_id=rfp_id,
+            version=2,
+            title="Proposal Draft v2",
+            executive_summary="Summary v2",
+            content_markdown="# v2",
+            review_score=100,
+            review_feedback_json='{"overall_status": "APPROVED", "score": 100, "findings": []}'
+        )
+        db.add_all([p1, p2])
+        db.commit()
+
+        # 1. Test _reconstruct_state_from_db
+        recon_state, target_node = wf_routes._reconstruct_state_from_db(rfp_id, db, rfp)
+        assert recon_state is not None
+        assert target_node == "review_proposal"
+        assert recon_state["current_version"] == 2
+        assert recon_state["revision_count"] == 1, f"Expected revision_count 1 for Proposal v2, got {recon_state['revision_count']}"
+
+        # 2. Test status endpoint when LangGraph checkpointer is empty
+        response = client.get(f"/api/workflow/{rfp_id}/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "AWAITING_FINAL_APPROVAL"
+        assert data["current_version"] == 2
+        assert data["revision_count"] == 1, f"Expected revision_count 1 from status endpoint, got {data['revision_count']}"
+        assert data["is_interrupted"] is True
+        assert data["interrupt_type"] == "FINAL_APPROVAL"
+    finally:
+        wf_routes.SessionLocal = orig_session_local
