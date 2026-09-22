@@ -6,6 +6,7 @@ from app.agents.state import RFPProposalState
 from app.agents.llm_factory import LLMFactory
 from app.core.prompts import RISK_AGENT_PROMPT
 from app.models.schemas import RiskItem, ClarificationQuestion, RiskAndClarificationOutput
+from app.rag.retriever import extract_relevant_evidence_snippet
 
 # Severe liability/contractual trigger keywords
 HARSH_CONTRACT_PATTERNS = re.compile(
@@ -124,7 +125,7 @@ def assess_risks_node(state: RFPProposalState) -> Dict[str, Any]:
                         "is_mandatory": r.get("is_mandatory"),
                         "compliance_status": c.get("status"),
                         "compliance_notes": c.get("notes"),
-                        "evidence_snippet": c.get("evidence_text"),
+                        "evidence_snippet": extract_relevant_evidence_snippet(r.get("text", ""), c.get("evidence_text"), status=c.get("status")),
                         "company_source_doc": c.get("company_source_doc")
                     })
 
@@ -310,10 +311,10 @@ def _sanitize_cross_requirement_evidence(
     # If contaminated, deterministically rebuild text strictly grounded on target requirement
     if is_contaminated:
         if status == "NON_COMPLIANT":
-            limitation = target_ev[:140] if target_ev else (target_notes[:140] if target_notes else "Documented limitation in company collateral indicates requirement is unsupported.")
+            limitation = extract_relevant_evidence_snippet(target_req_text, target_ev, status=status) or target_notes[:140] or "Documented limitation in company collateral indicates requirement is unsupported."
             return f"Requirement {target_req_id} is unsupported based on company evidence. Documented limitation: '{limitation}'."
         elif status == "PARTIALLY_COMPLIANT":
-            limitation = target_notes[:140] if target_notes else (target_ev[:140] if target_ev else "Documented partial capability.")
+            limitation = target_notes[:140] if target_notes else (extract_relevant_evidence_snippet(target_req_text, target_ev, status=status) or "Documented partial capability.")
             return f"Requirement {target_req_id} is partially supported. Documented limitation or workaround: '{limitation}'."
         elif status == "INFORMATION_REQUIRED":
             return f"Verification data is currently missing from company collateral for {target_req_id}: '{target_req_text[:140]}'. Capability status could not be verified from available evidence."
@@ -620,6 +621,7 @@ def _fallback_risk_analysis(
 
         if status == "NON_COMPLIANT":
             severity = "CRITICAL" if (is_mandatory or category in ["Eligibility", "Certification", "Legal", "Contractual"]) else "MEDIUM"
+            limitation = extract_relevant_evidence_snippet(req_text, evidence_text, status=status) or (notes[:140] if notes else "Documented limitation in company collateral indicates requirement is unsupported.")
             risk_to_add = RiskItem(
                 risk_id=f"RISK-{req_code}",
                 id=f"RISK-{req_code}",
@@ -629,7 +631,7 @@ def _fallback_risk_analysis(
                 severity=severity,
                 likelihood="High",
                 title=f"Non-Compliance: {category} ({req_code})",
-                description=f"Requirement {req_code} is unsupported based on company evidence. Documented limitation: '{evidence_text[:140] if evidence_text else notes[:140]}'.",
+                description=f"Requirement {req_code} is unsupported based on company evidence. Documented limitation: '{limitation}'.",
                 impact="Risk of proposal disqualification or compliance score deduction if submitted without an approved variance." if is_mandatory else "Loss of evaluation points for optional requirement.",
                 mitigation_strategy="Seek executive approval to formulate a formal variance/exception in the proposal response, or evaluate subcontractor partnership capabilities.",
                 recommended_action="Obtain executive bid sign-off on non-compliance carve-out.",
@@ -644,6 +646,7 @@ def _fallback_risk_analysis(
 
         elif status == "PARTIALLY_COMPLIANT":
             severity = "HIGH" if is_mandatory else "MEDIUM"
+            limitation = notes[:140] if notes else (extract_relevant_evidence_snippet(req_text, evidence_text, status=status) or "Documented partial capability.")
             risk_to_add = RiskItem(
                 risk_id=f"RISK-{req_code}",
                 id=f"RISK-{req_code}",
@@ -653,7 +656,7 @@ def _fallback_risk_analysis(
                 severity=severity,
                 likelihood="High",
                 title=f"Partial Compliance Gap: {category} ({req_code})",
-                description=f"Requirement {req_code} is partially supported. Documented limitation or workaround: '{notes[:140] if notes else evidence_text[:140]}'.",
+                description=f"Requirement {req_code} is partially supported. Documented limitation or workaround: '{limitation}'.",
                 impact="Potential client pushback or scoring deduction if the workaround/limitation is not fully accepted by the tender committee.",
                 mitigation_strategy="Draft an explicit proposal narrative outlining the supported portion, detailing the workaround/roadmap milestone, and confirming client fit.",
                 recommended_action="Document partial compliance transparently with technical justification.",

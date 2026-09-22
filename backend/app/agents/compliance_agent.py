@@ -41,7 +41,8 @@ AFFIRMATIVE_PATTERNS = re.compile(
     r'secured|encrypted|backed|native|implements|ensures|retention|replicated|'
     r'develops|develop|developed|builds|build|built|delivers|deliver|delivered|'
     r'engineered|maintains|maintain|offers|offer|designs|designed|available|compatible|'
-    r'enforces|enforce|timelines|scoping|commitments|methodology|architecture)\b',
+    r'enforces|enforce|timelines|scoping|commitments|methodology|architecture|'
+    r'manuals?|guides?|documentation|specifications?|training|workshops?)\b',
     re.IGNORECASE
 )
 

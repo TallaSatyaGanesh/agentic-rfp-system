@@ -11,6 +11,7 @@ from app.models.schemas import (
     ProposalSection,
     RequirementResponse
 )
+from app.rag.retriever import extract_relevant_evidence_snippet
 
 logger = logging.getLogger(__name__)
 
@@ -477,9 +478,11 @@ def _build_safe_requirement_response(
     if clarif:
         clarif_note = clarif.get("question_text") or clarif.get("question")
 
+    relevant_ev = extract_relevant_evidence_snippet(req_text, evidence_text, status=status)
+
     if status == "COMPLIANT":
         resp_type = "COMPLIANT_RESPONSE"
-        summary_ev = evidence_text if evidence_text else (notes if notes else "Confirmed in company collateral.")
+        summary_ev = relevant_ev if relevant_ev else (notes if notes else "Confirmed in company collateral.")
         response_text = (
             f"The proposed solution fully supports this requirement based on verified company documentation. "
             f"Specifically: {summary_ev} "
@@ -487,7 +490,7 @@ def _build_safe_requirement_response(
         )
     elif status == "PARTIALLY_COMPLIANT":
         resp_type = "PARTIAL_RESPONSE"
-        limitation = notes if notes else (evidence_text if evidence_text else "documented workaround")
+        limitation = notes if notes else (relevant_ev if relevant_ev else "documented workaround")
         response_text = (
             f"Partial Compliance: The proposed solution supports the identifiable capability within standard scope. "
             f"Documented limitation / workaround: '{limitation}'. "
@@ -495,7 +498,7 @@ def _build_safe_requirement_response(
         )
     elif status == "NON_COMPLIANT":
         resp_type = "EXCEPTION_RESPONSE"
-        limitation = evidence_text if evidence_text else (notes if notes else "Out of scope")
+        limitation = relevant_ev if relevant_ev else (notes if notes else "Out of scope")
         response_text = (
             f"Exception / Scope Variance: The available company documentation indicates that requirement {req_code} "
             f"is not currently supported ({limitation}). Proposal treatment requires an approved exception or alternative technical approach."
@@ -520,7 +523,7 @@ def _build_safe_requirement_response(
         chunk_id=comp.get("chunk_id"),
         source_page=source_page,
         source_section=source_section,
-        evidence_snippet=evidence_text,
+        evidence_snippet=relevant_ev or evidence_text,
         citations=citations,
         assumptions=[],
         clarification_required=clarif_note,

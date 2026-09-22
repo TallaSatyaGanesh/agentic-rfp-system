@@ -100,49 +100,281 @@ def extract_content_tokens(text: str) -> Set[str]:
     return content
 
 
+# Explicit non-compliance and limitation patterns for snippet extraction
+NON_COMPLIANT_PATTERNS = re.compile(
+    r'\b(?:(?:do|does|did|is|are|was|were|can|could|will|would)\s+(?:not|never)\s+(?:currently\s+|presently\s+|natively\s+|directly\s+)?(?:support|provide|offer|feature|hold|comply|guarantee|include)|'
+    r'not\s+(?:currently\s+|presently\s+|natively\s+)?(?:supported|provided|offered|held|certified|available|compliant|included)|'
+    r'unsupported|out\s+of\s+scope|explicitly\s+excluded|no\s+plans\s+to\s+support|cannot\s+comply|cannot\s+provide|cannot\s+support|unheld|business\s+hours\s+only)\b',
+    re.IGNORECASE
+)
+
+PARTIAL_COMPLIANT_PATTERNS = re.compile(
+    r'\b(?:partially\s+supported|partial\s+support|limited\s+support|requires\s+custom|workaround|'
+    r'conditional|planned\s+for|roadmap|beta|add-on\s+required|subject\s+to\s+third[- ]party|'
+    r'available\s+only\s+during\s+business\s+hours|business\s+hours\s+only|'
+    r'partially\s+compliant)\b',
+    re.IGNORECASE
+)
+
+AFFIRMATIVE_PATTERNS = re.compile(
+    r'\b(?:guarantees|guarantee|guaranteed|supports|support|supported|provides|provide|provided|'
+    r'operates|certified|compliance|compliant|complies|adheres|features|includes|included|'
+    r'secured|encrypted|backed|native|implements|ensures|retention|replicated|'
+    r'develops|develop|developed|builds|build|built|delivers|deliver|delivered|'
+    r'engineered|maintains|maintain|offers|offer|designs|designed|available|compatible|'
+    r'enforces|enforce|timelines|scoping|commitments|methodology|architecture|'
+    r'manuals?|guides?|documentation|specifications?|training|workshops?)\b',
+    re.IGNORECASE
+)
+
+
+def extract_relevant_evidence_snippet(
+    query_or_req: str,
+    evidence_text: Optional[str],
+    status: Optional[str] = None,
+    max_length: int = 240
+) -> str:
+    """
+    Extracts a concise, evidence-grounded sentence or context window from a retrieved knowledge chunk.
+    Prioritizes candidate units with strong requirement token overlap, specification/metric alignment,
+    and status-specific semantic matches (e.g. refusal statements for NON_COMPLIANT items).
+    Invariance to section/paragraph ordering: avoids naive prefix slicing.
+    """
+    if not evidence_text or not evidence_text.strip():
+        return ""
+
+    clean_ev = evidence_text.strip()
+
+    # Segment evidence into candidate units (paragraphs, bullet points, and individual sentences)
+    raw_paras = [p.strip() for p in re.split(r'\n\s*\n', clean_ev) if p.strip()]
+    candidate_units: List[str] = []
+    seen_units: Set[str] = set()
+
+    for p in raw_paras:
+        # Check bullet points / numbered list lines
+        lines = [line.strip() for line in p.split("\n") if line.strip()]
+        for line in lines:
+            cleaned_line = re.sub(r'^[-*•\d\.\)\s]+', '', line).strip()
+            if len(cleaned_line) >= 15 and cleaned_line.lower() not in seen_units:
+                candidate_units.append(line.strip())
+                seen_units.add(cleaned_line.lower())
+
+        # Check individual sentences
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', p) if s.strip()]
+        for s in sentences:
+            cleaned_s = re.sub(r'^[-*•\d\.\)\s]+', '', s).strip()
+            if len(cleaned_s) >= 15 and cleaned_s.lower() not in seen_units:
+                candidate_units.append(s.strip())
+                seen_units.add(cleaned_s.lower())
+
+        # Whole paragraph if reasonably concise
+        if len(p) <= max_length and p.lower() not in seen_units:
+            candidate_units.append(p)
+            seen_units.add(p.lower())
+
+    if not candidate_units:
+        candidate_units = [clean_ev]
+
+    sanitized_q = sanitize_requirement_query(query_or_req)
+    req_tokens = extract_content_tokens(sanitized_q or query_or_req)
+    # Extract numerical, acronym, and hyphenated specification tokens (e.g. 27001, 99.95%, 16, 24/7, aes-256)
+    spec_tokens = set(re.findall(
+        r'\b(?:\d+(?:\.\d+)*%?|[a-z0-9]+-[a-z0-9]+|\b(?:24/7|24x7|mfa|rbac|sso|saml|oidc|aes|tls|fips|rto|rpo|sla)\b)\b',
+        (sanitized_q or query_or_req).lower()
+    ))
+
+    scored_candidates = []
+    norm_status = (status or "").upper()
+
+    for unit in candidate_units:
+        unit_clean = re.sub(r'^[-*•\d\.\)\s]+', '', unit).strip()
+        unit_tokens = extract_content_tokens(unit_clean)
+        token_overlap = len(req_tokens & unit_tokens)
+
+        unit_lower = unit_clean.lower()
+        spec_overlap = sum(1 for tok in spec_tokens if tok in unit_lower)
+
+        has_non_comp = bool(NON_COMPLIANT_PATTERNS.search(unit_clean))
+        has_partial = bool(PARTIAL_COMPLIANT_PATTERNS.search(unit_clean))
+        has_affirmative = bool(AFFIRMATIVE_PATTERNS.search(unit_clean))
+
+        score = 0.0
+        score += (token_overlap * 2.0)
+        score += (spec_overlap * 3.5)
+
+        if norm_status == "NON_COMPLIANT":
+            if has_non_comp:
+                score += 8.0
+                if token_overlap > 0 or spec_overlap > 0:
+                    score += 4.0
+            if has_affirmative and not has_non_comp and token_overlap == 0:
+                score -= 4.0
+        elif norm_status == "PARTIALLY_COMPLIANT":
+            if has_partial:
+                score += 8.0
+            elif has_non_comp:
+                score += 4.0
+        elif norm_status == "COMPLIANT":
+            if has_affirmative:
+                score += 4.0
+            if has_non_comp and not has_affirmative:
+                score -= 6.0
+        else:
+            if has_non_comp or has_partial or has_affirmative:
+                score += 2.0
+
+        scored_candidates.append((score, token_overlap, spec_overlap, unit_clean))
+
+    scored_candidates.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
+    best_score, best_tok, best_spec, best_unit = scored_candidates[0] if scored_candidates else (0, 0, 0, "")
+
+    if best_score > 0 and best_unit:
+        selected = best_unit
+    else:
+        # Fallback when no candidate scored positively
+        if norm_status == "NON_COMPLIANT":
+            for _, _, _, u in scored_candidates:
+                if NON_COMPLIANT_PATTERNS.search(u):
+                    selected = u
+                    break
+            else:
+                return "Documented limitation in company collateral indicates requirement is unsupported."
+        elif norm_status == "PARTIALLY_COMPLIANT":
+            for _, _, _, u in scored_candidates:
+                if PARTIAL_COMPLIANT_PATTERNS.search(u):
+                    selected = u
+                    break
+            else:
+                return "Documented partial capability."
+        elif len(clean_ev) <= max_length:
+            selected = clean_ev
+        else:
+            selected = candidate_units[0].strip()
+
+    clean_selected = re.sub(r'^\s*[-*•]\s*', '', selected).strip()
+    clean_selected = re.sub(r'\s+', ' ', clean_selected)
+
+    if len(clean_selected) > max_length:
+        truncated = clean_selected[:max_length]
+        last_space = truncated.rfind(' ')
+        if last_space > int(max_length * 0.7):
+            clean_selected = truncated[:last_space].rstrip('.,;-') + "..."
+        else:
+            clean_selected = truncated.rstrip('.,;-') + "..."
+
+    return clean_selected
+
+
 class KnowledgeBaseRetriever:
     def __init__(self):
         self.vector_store = VectorStoreManager.get_instance()
 
-    @staticmethod
-    def chunk_text(text: str, chunk_size: int = 600, overlap: int = 100) -> List[str]:
+    @classmethod
+    def chunk_document_sections(
+        cls,
+        text: str,
+        chunk_size: int = 600,
+        overlap: int = 100
+    ) -> List[Dict[str, Any]]:
         """
-        Splits text into overlapping semantic chunks based on sentences/paragraphs.
+        Splits text into section-aware semantic chunks.
+        Recognizes numbered section headings (e.g. '1.', '2.', '3.1'), markdown headings ('#', '##'),
+        and standalone section headers, preventing unrelated document sections from being merged into one chunk.
         """
-        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-        chunks: List[str] = []
-        current_chunk = ""
+        if not text or not text.strip():
+            return []
 
-        for p in paragraphs:
-            if len(current_chunk) + len(p) <= chunk_size:
-                current_chunk = f"{current_chunk}\n\n{p}".strip()
+        section_pattern = re.compile(
+            r'^(?:'
+            r'#{1,6}\s+(?P<h_md>[^\n]+)|'
+            r'(?P<h_num>(?:(?:\d+\.){1,4}\s+|\b(?:Section|Chapter|Article|Clause|Schedule|Part|Appendix|Annex)\s+(?:\d+|[A-Z])(?:\.[\w\-]+)*\s*[:\.\-]?\s*)[^\n]+)'
+            r')$',
+            re.MULTILINE
+        )
+
+        matches = list(section_pattern.finditer(text))
+        sections: List[Dict[str, str]] = []
+
+        if matches:
+            first_start = matches[0].start()
+            if first_start > 0:
+                preamble = text[:first_start].strip()
+                if preamble:
+                    sections.append({
+                        "section": "Overview",
+                        "text": preamble
+                    })
+
+            for i, match in enumerate(matches):
+                header_line = match.group(0).strip()
+                clean_title = re.sub(r'^#{1,6}\s+', '', header_line).strip()
+                start_pos = match.start()
+                end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+                sec_text = text[start_pos:end_pos].strip()
+                if sec_text:
+                    sections.append({
+                        "section": clean_title,
+                        "text": sec_text
+                    })
+        else:
+            sections = [{"section": "General", "text": text.strip()}]
+
+        chunks: List[Dict[str, Any]] = []
+
+        for sec in sections:
+            sec_title = sec["section"]
+            sec_text = sec["text"]
+
+            if len(sec_text) <= chunk_size:
+                chunks.append({
+                    "text": sec_text,
+                    "section": sec_title
+                })
             else:
-                if current_chunk:
-                    chunks.append(current_chunk)
-
-                # If paragraph itself is larger than chunk_size, split by sentences
-                if len(p) > chunk_size:
-                    sentences = re.split(r'(?<=[.!?]) +', p)
-                    sub_chunk = ""
-                    for s in sentences:
-                        if len(sub_chunk) + len(s) <= chunk_size:
-                            sub_chunk = f"{sub_chunk} {s}".strip()
+                paragraphs = [p.strip() for p in sec_text.split("\n\n") if p.strip()]
+                current_chunk = ""
+                for p in paragraphs:
+                    if len(current_chunk) + len(p) <= chunk_size:
+                        current_chunk = f"{current_chunk}\n\n{p}".strip()
+                    else:
+                        if current_chunk:
+                            chunks.append({
+                                "text": current_chunk,
+                                "section": sec_title
+                            })
+                        if len(p) > chunk_size:
+                            sentences = re.split(r'(?<=[.!?])\s+', p)
+                            sub_chunk = ""
+                            for s in sentences:
+                                if len(sub_chunk) + len(s) <= chunk_size:
+                                    sub_chunk = f"{sub_chunk} {s}".strip()
+                                else:
+                                    if sub_chunk:
+                                        chunks.append({
+                                            "text": sub_chunk,
+                                            "section": sec_title
+                                        })
+                                    sub_chunk = s
+                            current_chunk = sub_chunk
                         else:
-                            if sub_chunk:
-                                chunks.append(sub_chunk)
-                            sub_chunk = s
-                    current_chunk = sub_chunk
-                else:
-                    current_chunk = p
+                            current_chunk = p
+                if current_chunk:
+                    chunks.append({
+                        "text": current_chunk,
+                        "section": sec_title
+                    })
 
-        if current_chunk:
-            chunks.append(current_chunk)
-
-        # Fallback if no chunks generated
         if not chunks and text.strip():
-            chunks = [text.strip()[:chunk_size]]
+            chunks = [{"text": text.strip()[:chunk_size], "section": "General"}]
 
         return chunks
+
+    @classmethod
+    def chunk_text(cls, text: str, chunk_size: int = 600, overlap: int = 100) -> List[str]:
+        """
+        Splits text into semantic chunks. Preserves backward compatibility.
+        """
+        return [c["text"] for c in cls.chunk_document_sections(text, chunk_size=chunk_size, overlap=overlap)]
 
     def index_document(
         self,
@@ -165,8 +397,8 @@ class KnowledgeBaseRetriever:
         if (any(term in lower_file for term in ["rfp", "tender", "rfq", "solicitation"]) or category.lower() in ["rfp", "tender"]) and not doc_id.startswith("comp_"):
             raise ValueError(f"RFP document '{filename}' cannot be indexed into company knowledge base.")
 
-        chunks = self.chunk_text(content)
-        if not chunks:
+        chunk_items = self.chunk_document_sections(content)
+        if not chunk_items:
             return 0
 
         # Idempotency guarantee: purge existing chunks for this doc_id before re-adding
@@ -180,8 +412,13 @@ class KnowledgeBaseRetriever:
         metadatas = []
         ids = []
 
-        for idx, chunk in enumerate(chunks):
+        for idx, chunk_info in enumerate(chunk_items):
             chunk_id = f"{doc_id}_chunk_{idx}"
+            chunk_text = chunk_info["text"]
+            chunk_section = chunk_info.get("section")
+            if not chunk_section or chunk_section == "General":
+                chunk_section = section or category
+
             metadata = {
                 "company_doc_id": doc_id,
                 "chunk_id": chunk_id,
@@ -189,12 +426,12 @@ class KnowledgeBaseRetriever:
                 "filename": filename,
                 "category": category,
                 "page_number": page_number if page_number is not None else 1,
-                "section": section if section else category,
+                "section": chunk_section,
                 "chunk_index": idx,
-                "total_chunks": len(chunks),
+                "total_chunks": len(chunk_items),
                 "is_company_collateral": True
             }
-            texts.append(chunk)
+            texts.append(chunk_text)
             metadatas.append(metadata)
             ids.append(chunk_id)
 
@@ -203,7 +440,7 @@ class KnowledgeBaseRetriever:
             metadatas=metadatas,
             ids=ids
         )
-        return len(chunks)
+        return len(chunk_items)
 
     def retrieve_relevant_evidence(
         self,
