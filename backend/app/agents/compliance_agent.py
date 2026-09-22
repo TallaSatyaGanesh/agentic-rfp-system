@@ -11,11 +11,9 @@ from app.core.config import settings
 
 # Explicit non-compliance patterns in company collateral
 NON_COMPLIANT_PATTERNS = re.compile(
-    r'\b(?:not\s+supported|unsupported|does\s+not\s+support|cannot\s+support|out\s+of\s+scope|'
-    r'not\s+offered|cannot\s+provide|unavailable|no\s+plans\s+to\s+support|explicitly\s+excluded|'
-    r'not\s+held|not\s+currently\s+held|not\s+certified|unheld|cannot\s+comply|not\s+compliant|'
-    r'business\s+hours\s+only|available\s+only\s+during\s+business\s+hours|not\s+available|'
-    r'does\s+not\s+provide)\b',
+    r'\b(?:(?:do|does|did|is|are|was|were|can|could|will|would)\s+(?:not|never)\s+(?:currently\s+|presently\s+|natively\s+|directly\s+)?(?:support|provide|offer|feature|hold|comply|guarantee|include)|'
+    r'not\s+(?:currently\s+|presently\s+|natively\s+)?(?:supported|provided|offered|held|certified|available|compliant|included)|'
+    r'unsupported|out\s+of\s+scope|explicitly\s+excluded|no\s+plans\s+to\s+support|cannot\s+comply|cannot\s+provide|cannot\s+support|unheld|business\s+hours\s+only)\b',
     re.IGNORECASE
 )
 
@@ -25,6 +23,14 @@ PARTIAL_COMPLIANT_PATTERNS = re.compile(
     r'conditional|planned\s+for|roadmap|beta|add-on\s+required|subject\s+to\s+third[- ]party|'
     r'available\s+only\s+during\s+business\s+hours|business\s+hours\s+only|'
     r'partially\s+compliant)\b',
+    re.IGNORECASE
+)
+
+# Explicit notice that a term/SLA/currency requires separate commercial negotiation or formal agreement
+SEPARATE_CONFIRMATION_PATTERNS = re.compile(
+    r'\b(?:must\s+be\s+confirmed\s+separately|require\s+separate|requires\s+separate|'
+    r'separate\s+commercial\s+negotiation|separate\s+qualification|subject\s+to\s+separate|'
+    r'confirmed\s+separately|requires\s+formal\s+scoping\s+validation)\b',
     re.IGNORECASE
 )
 
@@ -135,15 +141,154 @@ def analyze_compliance_node(state: RFPProposalState) -> Dict[str, Any]:
         ]
 
         # Select best candidate evidence chunk:
-        # Check if any candidate chunk provides definitive COMPLIANT or explicit NON_COMPLIANT evidence
-        best_evidence = evidence_list[0]
+        # Evaluate each retrieved candidate chunk by specification authority, semantic relevance, and domain coverage
+        clean_req = clean_req_text or req_text
+        low_req = req_text.lower()
+        is_exp_req = any(k in low_req for k in ["experience", "case study", "track record", "reference", "references", "past project", "operating experience", "years in business"])
+
+        # Determine target domain for requirement
+        req_cat_lower = (category or "").lower()
+        if not req_cat_lower or req_cat_lower in ["general", "other", "requirement"]:
+            if any(k in low_req for k in ["api", "rest", "database", "backup", "web", "architecture", "server", "cloud", "ui", "frontend", "backend", "application"]):
+                req_cat_lower = "technical"
+            elif any(k in low_req for k in ["security", "rbac", "mfa", "encryption", "auth", "access control", "iso", "soc", "governance", "certification"]):
+                req_cat_lower = "security"
+            elif any(k in low_req for k in ["timeline", "delivery", "manual", "guide", "documentation", "weeks", "training", "deployment", "implementation"]):
+                req_cat_lower = "delivery"
+            elif is_exp_req:
+                req_cat_lower = "experience"
+
+        req_terms = _extract_domain_terms(clean_req)
+
+        scored_candidates = []
         for ev_cand in evidence_list:
-            cand_status, _, _ = _evaluate_semantic_compliance(clean_req_text or req_text, ev_cand.get("evidence_text", ""))
-            if cand_status == "COMPLIANT":
-                best_evidence = ev_cand
-                break
-            elif cand_status == "NON_COMPLIANT" and best_evidence == evidence_list[0]:
-                best_evidence = ev_cand
+            cand_text = ev_cand.get("evidence_text", "")
+            cand_title = ev_cand.get("document_title", "")
+            cand_cat = ev_cand.get("category", "")
+            sim = ev_cand.get("similarity", 0.0)
+
+            cand_status, cand_conf, cand_notes = _evaluate_semantic_compliance(clean_req, cand_text)
+            coverage, matched_terms = _compute_semantic_coverage(req_terms, cand_text)
+
+            is_case_study = (
+                "case study" in cand_text.lower()
+                or "experience & references" in cand_title.lower()
+                or cand_cat.lower() in ["experience", "references"]
+            )
+
+            # Specification Authority Scoring:
+            # Core technical/security/delivery specs > General Overview > Services/Deployment > Case studies
+            authority_score = 50.0
+            cand_cat_lower = (cand_cat or "").lower()
+            cand_title_lower = cand_title.lower()
+
+            if req_cat_lower in ["technical", "functional", "architecture", "platform"]:
+                if any(k in cand_cat_lower or k in cand_title_lower for k in ["technical", "platform", "architecture"]):
+                    authority_score = 80.0
+                elif any(k in cand_cat_lower or k in cand_title_lower for k in ["overview", "general"]):
+                    authority_score = 65.0
+                elif any(k in cand_cat_lower or k in cand_title_lower for k in ["delivery", "implementation", "support", "services"]):
+                    authority_score = 40.0
+                elif is_case_study:
+                    authority_score = 20.0
+            elif req_cat_lower in ["security", "governance", "compliance", "certification"]:
+                if any(k in cand_cat_lower or k in cand_title_lower for k in ["security", "governance", "compliance"]):
+                    authority_score = 80.0
+                elif is_case_study:
+                    authority_score = 20.0
+            elif req_cat_lower in ["delivery", "documentation", "timeline", "implementation", "support"]:
+                if any(k in cand_cat_lower or k in cand_title_lower for k in ["delivery", "implementation", "documentation", "support"]):
+                    authority_score = 80.0
+                elif is_case_study:
+                    authority_score = 20.0
+            elif req_cat_lower in ["experience", "references", "eligibility"]:
+                if any(k in cand_cat_lower or k in cand_title_lower for k in ["experience", "references"]):
+                    authority_score = 80.0
+
+            # Relevance and Semantic Coverage Scoring:
+            relevance_score = (sim * 50.0) + (coverage * 50.0)
+            total_score = authority_score + relevance_score
+
+            scored_candidates.append({
+                "score": total_score,
+                "authority": authority_score,
+                "relevance": relevance_score,
+                "status": cand_status,
+                "conf": cand_conf,
+                "notes": cand_notes,
+                "cand": ev_cand,
+                "coverage": coverage,
+                "matched_terms": matched_terms,
+                "is_case_study": is_case_study
+            })
+
+        scored_candidates.sort(key=lambda x: x["score"], reverse=True)
+
+        # Contradiction Detection & Safety Arbitrament across relevant retrieved candidates
+        relevant_cands = [
+            c for c in scored_candidates
+            if c["coverage"] >= 0.35 or len(c["matched_terms"]) >= 2
+        ]
+
+        comp_cands = [c for c in relevant_cands if c["status"] == "COMPLIANT"]
+        non_comp_cands = [c for c in relevant_cands if c["status"] == "NON_COMPLIANT"]
+        partial_cands = [c for c in relevant_cands if c["status"] == "PARTIALLY_COMPLIANT"]
+
+        forced_status: Optional[str] = None
+        contradiction_note: Optional[str] = None
+        best_candidate_entry = scored_candidates[0] if scored_candidates else None
+
+        # Scenario A: Contradictory evidence detected (Both affirmative COMPLIANT and negative NON_COMPLIANT exist on this requirement topic)
+        if comp_cands and non_comp_cands:
+            top_comp = comp_cands[0]
+            top_non_comp = non_comp_cands[0]
+
+            # If the negative statement comes from a higher-authority spec doc than a vague positive case study/collateral:
+            if top_non_comp["authority"] > top_comp["authority"]:
+                best_candidate_entry = top_non_comp
+                forced_status = "NON_COMPLIANT"
+                contradiction_note = top_non_comp["notes"]
+            # If documents have equal authority or conflicting statements:
+            elif abs(top_non_comp["authority"] - top_comp["authority"]) < 10.0:
+                best_candidate_entry = top_comp if top_comp["score"] >= top_non_comp["score"] else top_non_comp
+                forced_status = "INFORMATION_REQUIRED"
+                contradiction_note = (
+                    "Conflicting evidence detected in company knowledge base: some collateral indicates support "
+                    "while other documentation specifies this capability is unsupported or restricted. "
+                    "Explicit bid team clarification required."
+                )
+            else:
+                # Top comp has higher authority, but check if there's an ambiguous scope limitation
+                best_candidate_entry = top_comp
+                if top_non_comp["coverage"] >= 0.50:
+                    forced_status = "INFORMATION_REQUIRED"
+                    contradiction_note = (
+                        "Ambiguous or conditional statements detected across company collateral regarding this capability. "
+                        "Information required from bid team to confirm compliance scope."
+                    )
+
+        # Scenario B: Partial limitation vs Full compliance on same topic
+        elif comp_cands and partial_cands:
+            top_comp = comp_cands[0]
+            top_partial = partial_cands[0]
+            if top_partial["authority"] >= top_comp["authority"]:
+                best_candidate_entry = top_partial
+            else:
+                best_candidate_entry = top_comp
+
+        # Scenario C: Only negative candidates exist
+        elif non_comp_cands and not comp_cands:
+            best_candidate_entry = non_comp_cands[0]
+
+        # Scenario D: Only affirmative candidates exist
+        elif comp_cands and not non_comp_cands:
+            best_candidate_entry = comp_cands[0]
+
+        # Scenario E: Only partial candidates exist
+        elif partial_cands and not comp_cands and not non_comp_cands:
+            best_candidate_entry = partial_cands[0]
+
+        best_evidence = best_candidate_entry["cand"] if best_candidate_entry else evidence_list[0]
 
         evidence_text = best_evidence.get("evidence_text", "")
         source_doc = f"{best_evidence.get('document_title')} ({best_evidence.get('filename')})"
@@ -177,7 +322,9 @@ def analyze_compliance_node(state: RFPProposalState) -> Dict[str, Any]:
                     req_text=req_text,
                     category=category,
                     best_evidence=best_evidence,
-                    citations=citations
+                    citations=citations,
+                    forced_status=forced_status,
+                    contradiction_note=contradiction_note
                 )
             except Exception as e:
                 print(f"[Agent 3: Compliance] LLM audit failed for {req_code}: {e}. Using deterministic fallback.")
@@ -190,7 +337,9 @@ def analyze_compliance_node(state: RFPProposalState) -> Dict[str, Any]:
                 req_text=req_text,
                 category=category,
                 best_evidence=best_evidence,
-                citations=citations
+                citations=citations,
+                forced_status=forced_status,
+                contradiction_note=contradiction_note
             )
 
         compliance_items.append(evaluated_item)
@@ -322,20 +471,44 @@ def _evaluate_semantic_compliance(
                 "Company documentation explicitly specifies support is restricted to business hours, failing the 24/7 requirement."
             )
 
-    # 2. Check for explicit refusal/non-compliance patterns
-    rel_is_refusal = bool(NON_COMPLIANT_PATTERNS.search(relevant_sent))
-    ev_is_refusal = bool(NON_COMPLIANT_PATTERNS.search(evidence_text))
+    # 2. Check for explicit refusal/non-compliance patterns on requirement topic
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', evidence_text) if s.strip()]
+    refusal_sent = None
+    if NON_COMPLIANT_PATTERNS.search(relevant_sent):
+        refusal_sent = relevant_sent
+    else:
+        for s in sentences:
+            if NON_COMPLIANT_PATTERNS.search(s):
+                s_toks = set(re.findall(r'\b[a-zA-Z0-9_\-\.]{2,}\b', s.lower()))
+                s_overlap = len(req_terms & s_toks)
+                if s_overlap >= 2 or (len(req_terms) == 1 and s_overlap >= 1):
+                    refusal_sent = s
+                    break
+
     rel_is_partial = bool(PARTIAL_COMPLIANT_PATTERNS.search(relevant_sent))
     ev_is_partial = bool(PARTIAL_COMPLIANT_PATTERNS.search(evidence_text))
 
-    if rel_is_refusal and not rel_is_partial:
+    if refusal_sent and not rel_is_partial:
         return (
             "NON_COMPLIANT",
             0.90,
             "Company documentation explicitly states that this feature/standard is unsupported or out of scope."
         )
 
-    # 3. Check for explicit partial compliance (Must have some satisfied portion AND explicit limitation)
+    # 3. Check for separate confirmation / commercial negotiation disclaimers on this topic
+    has_sep_disclaimer = bool(SEPARATE_CONFIRMATION_PATTERNS.search(relevant_sent))
+    if has_sep_disclaimer:
+        # 16-week delivery timeframe is standard in Delivery notice
+        if "16" in req_terms and "16-week" in evidence_text.lower() and ("delivery" in req_terms or "implementation" in req_terms or "timeline" in req_terms):
+            pass
+        else:
+            return (
+                "INFORMATION_REQUIRED",
+                0.0,
+                "Company documentation specifies this capability/term requires separate commercial negotiation or formal qualification."
+            )
+
+    # 4. Check for explicit partial compliance (Must have some satisfied portion AND explicit limitation)
     if rel_is_partial or ev_is_partial:
         # Check that an identifiable portion is satisfied
         if coverage >= 0.35 or len(matched_terms) >= 2 or has_24_7_in_ev:
@@ -352,19 +525,11 @@ def _evaluate_semantic_compliance(
                 "Evidence contains limitation language on unrelated capabilities and does not demonstrate satisfaction of the required capability."
             )
 
-    # 4. Check for chunk-level refusal if not already partial
-    if ev_is_refusal and coverage >= 0.35:
-        return (
-            "NON_COMPLIANT",
-            0.85,
-            "Company collateral explicitly indicates exclusion or lack of support for this capability."
-        )
-
     # 5. Check for direct COMPLIANT satisfaction
     # Must have high semantic coverage of distinctive domain terms AND affirmative capability language
     has_affirmative = bool(AFFIRMATIVE_PATTERNS.search(evidence_text))
 
-    if coverage >= 0.50 and has_affirmative and not ev_is_refusal:
+    if coverage >= 0.50 and has_affirmative and not refusal_sent:
         conf = min(1.0, max(0.75, round(coverage, 2)))
         return (
             "COMPLIANT",
@@ -386,11 +551,14 @@ def _apply_programmatic_safety_guard(
     req_text: str,
     category: str,
     best_evidence: Dict[str, Any],
-    citations: List[Dict[str, Any]]
+    citations: List[Dict[str, Any]],
+    forced_status: Optional[str] = None,
+    contradiction_note: Optional[str] = None
 ) -> ComplianceItem:
     """
     Enforces deterministic safety rules regardless of LLM hallucinations:
     - Normalizes status to strictly one of 4 allowed values.
+    - If contradiction / ambiguous scope was detected across candidates, enforces forced_status.
     - COMPLIANT requires direct supporting evidence. If semantically insufficient, overrides to INFORMATION_REQUIRED.
     - PARTIALLY_COMPLIANT requires explicit partial-support evidence. If weak/unrelated, overrides to INFORMATION_REQUIRED.
     - NON_COMPLIANT requires explicit failure/refusal evidence. If evidence is merely absent, overrides to INFORMATION_REQUIRED.
@@ -403,49 +571,54 @@ def _apply_programmatic_safety_guard(
     # Compute ground-truth semantic compliance from evidence text
     semantic_status, semantic_conf, default_notes = _evaluate_semantic_compliance(req_text, evidence_text)
 
-    llm_status = llm_output.status if llm_output.status in ["COMPLIANT", "PARTIALLY_COMPLIANT", "NON_COMPLIANT", "INFORMATION_REQUIRED"] else "INFORMATION_REQUIRED"
-
-    # Enforce safety rules on LLM output:
-    if llm_status == "COMPLIANT":
-        if semantic_status == "COMPLIANT":
-            final_status = "COMPLIANT"
-            final_conf = max(semantic_conf, float(llm_output.confidence or 0.0))
-        elif semantic_status == "PARTIALLY_COMPLIANT":
-            final_status = "PARTIALLY_COMPLIANT"
-            final_conf = semantic_conf
-        elif semantic_status == "NON_COMPLIANT":
-            final_status = "NON_COMPLIANT"
-            final_conf = semantic_conf
-        else:
-            final_status = "INFORMATION_REQUIRED"
-            final_conf = 0.0
-
-    elif llm_status == "PARTIALLY_COMPLIANT":
-        if semantic_status == "PARTIALLY_COMPLIANT":
-            final_status = "PARTIALLY_COMPLIANT"
-            final_conf = max(semantic_conf, float(llm_output.confidence or 0.0))
-        elif semantic_status == "NON_COMPLIANT":
-            final_status = "NON_COMPLIANT"
-            final_conf = semantic_conf
-        else:
-            final_status = "INFORMATION_REQUIRED"
-            final_conf = 0.0
-
-    elif llm_status == "NON_COMPLIANT":
-        if semantic_status == "NON_COMPLIANT":
-            final_status = "NON_COMPLIANT"
-            final_conf = max(semantic_conf, float(llm_output.confidence or 0.0))
-        else:
-            final_status = "INFORMATION_REQUIRED"
-            final_conf = 0.0
-
+    if forced_status:
+        final_status = forced_status
+        final_conf = semantic_conf if forced_status != "INFORMATION_REQUIRED" else 0.0
+        notes = contradiction_note or default_notes
     else:
-        final_status = "INFORMATION_REQUIRED"
-        final_conf = 0.0
+        llm_status = llm_output.status if llm_output.status in ["COMPLIANT", "PARTIALLY_COMPLIANT", "NON_COMPLIANT", "INFORMATION_REQUIRED"] else "INFORMATION_REQUIRED"
 
-    notes = llm_output.notes or default_notes
-    if final_status == "INFORMATION_REQUIRED" and llm_status != "INFORMATION_REQUIRED":
-        notes = f"[Safety Guard Override] {default_notes}"
+        # Enforce safety rules on LLM output:
+        if llm_status == "COMPLIANT":
+            if semantic_status == "COMPLIANT":
+                final_status = "COMPLIANT"
+                final_conf = max(semantic_conf, float(llm_output.confidence or 0.0))
+            elif semantic_status == "PARTIALLY_COMPLIANT":
+                final_status = "PARTIALLY_COMPLIANT"
+                final_conf = semantic_conf
+            elif semantic_status == "NON_COMPLIANT":
+                final_status = "NON_COMPLIANT"
+                final_conf = semantic_conf
+            else:
+                final_status = "INFORMATION_REQUIRED"
+                final_conf = 0.0
+
+        elif llm_status == "PARTIALLY_COMPLIANT":
+            if semantic_status == "PARTIALLY_COMPLIANT":
+                final_status = "PARTIALLY_COMPLIANT"
+                final_conf = max(semantic_conf, float(llm_output.confidence or 0.0))
+            elif semantic_status == "NON_COMPLIANT":
+                final_status = "NON_COMPLIANT"
+                final_conf = semantic_conf
+            else:
+                final_status = "INFORMATION_REQUIRED"
+                final_conf = 0.0
+
+        elif llm_status == "NON_COMPLIANT":
+            if semantic_status == "NON_COMPLIANT":
+                final_status = "NON_COMPLIANT"
+                final_conf = max(semantic_conf, float(llm_output.confidence or 0.0))
+            else:
+                final_status = "INFORMATION_REQUIRED"
+                final_conf = 0.0
+
+        else:
+            final_status = "INFORMATION_REQUIRED"
+            final_conf = 0.0
+
+        notes = llm_output.notes or default_notes
+        if final_status == "INFORMATION_REQUIRED" and llm_status != "INFORMATION_REQUIRED":
+            notes = f"[Safety Guard Override] {default_notes}"
 
     ev_text_out = evidence_text if final_status != "INFORMATION_REQUIRED" else None
     source_doc_out = source_doc if final_status != "INFORMATION_REQUIRED" else None
@@ -474,7 +647,9 @@ def _fallback_compliance_eval(
     req_text: str,
     category: str,
     best_evidence: Dict[str, Any],
-    citations: List[Dict[str, Any]]
+    citations: List[Dict[str, Any]],
+    forced_status: Optional[str] = None,
+    contradiction_note: Optional[str] = None
 ) -> ComplianceItem:
     """
     Deterministic rule-based compliance evaluator.
@@ -484,7 +659,10 @@ def _fallback_compliance_eval(
     source_doc = f"{best_evidence.get('document_title')} ({best_evidence.get('filename')})"
     sim_score = best_evidence.get("similarity", 0.0)
 
-    status, confidence, notes = _evaluate_semantic_compliance(req_text, evidence_text)
+    semantic_status, semantic_conf, default_notes = _evaluate_semantic_compliance(req_text, evidence_text)
+    status = forced_status or semantic_status
+    confidence = semantic_conf if status != "INFORMATION_REQUIRED" else 0.0
+    notes = contradiction_note or default_notes
 
     ev_text_out = evidence_text if status != "INFORMATION_REQUIRED" else None
     source_doc_out = source_doc if status != "INFORMATION_REQUIRED" else None

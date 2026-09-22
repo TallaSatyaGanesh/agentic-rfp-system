@@ -51,22 +51,33 @@ def sanitize_requirement_query(text: str) -> str:
         flags=re.IGNORECASE
     ).strip()
 
-    # 3. Strip leading generic RFP requirement boilerplate e.g. "The vendor MUST provide", "The platform SHALL support"
+    # 3. Strip leading generic RFP requirement boilerplate e.g. "Vendor MUST provide", "The platform SHALL support"
     cleaned = re.sub(
-        r'^(?:The\s+(?:vendor|bidder|contractor|platform|solution|system|company|service|software)\s+(?:must|shall|should|will|is\s+required\s+to|needs\s+to|agrees\s+to)\s+(?:provide|support|ensure|maintain|deliver|demonstrate|implement|feature|include)?\s*)',
+        r'^(?:(?:The|Our)\s+)?(?:vendor|bidder|contractor|platform|solution|system|company|service|software)\s+(?:must|shall|should|will|is\s+required\s+to|needs\s+to|agrees\s+to)?\s*(?:provide|support|ensure|maintain|deliver|demonstrate|implement|feature|include)?\s*',
         '',
         cleaned,
         flags=re.IGNORECASE
     ).strip()
+    cleaned = re.sub(r'^(?:a|an|the)\s+', '', cleaned, flags=re.IGNORECASE).strip()
 
     return cleaned or text.strip()
 
 
+def _stem_token(tok: str) -> str:
+    """Basic deterministic morphological stemming for English suffix variations."""
+    t = tok.lower().strip(".-")
+    for suffix in ["tions", "tion", "ments", "ment", "abilities", "ability", "ings", "ing", "ers", "er", "ies", "ied", "ed", "ses", "es", "s"]:
+        if t.endswith(suffix) and len(t) - len(suffix) >= 3:
+            return t[:-len(suffix)]
+    return t
+
+
 def extract_content_tokens(text: str) -> Set[str]:
     """
-    Extracts substantive alphanumeric content tokens from text,
+    Extracts substantive alphanumeric canonical content tokens from text,
     ignoring structural ID codes (e.g. req-tech-001, r-sec-99, clause-2.1) and stopwords.
     Preserves numbers and specification metrics (e.g. '9001', '27001', '16').
+    Normalizes words to canonical morphological stems to ensure symmetric vocabulary alignment.
     """
     raw_tokens = re.findall(r'\b[a-zA-Z0-9_\-\.]{2,}\b', text.lower())
     content: Set[str] = set()
@@ -79,13 +90,13 @@ def extract_content_tokens(text: str) -> Set[str]:
         # Skip structural ID codes (e.g. req-tech-001, r-sec-99, schedule-phase-1, clause-2.1)
         if re.match(r'^(?:req|rfp|sec|doc|tech|del|comm|cert|elig|sub|con|opt|man|mandatory|clause|schedule|part|field|integ|train|crypto)[-_][a-z0-9_\.-]+$', tok_clean):
             continue
-        content.add(tok_clean)
-        # Add subparts of hyphenated terms if meaningful
         if "-" in tok_clean:
             for sub in tok_clean.split("-"):
                 sub_clean = sub.strip(".-")
                 if sub_clean and len(sub_clean) >= 2 and sub_clean not in RAG_STOP_WORDS:
-                    content.add(sub_clean)
+                    content.add(_stem_token(sub_clean))
+        else:
+            content.add(_stem_token(tok_clean))
     return content
 
 
@@ -237,12 +248,14 @@ class KnowledgeBaseRetriever:
 
             for doc_text, meta, dist in zip(documents, metadatas, distances):
                 cos_sim = max(0.0, 1.0 - dist)
-                d_tokens = extract_content_tokens(doc_text)
+                meta_ctx = f"{meta.get('title', '')} {meta.get('category', '')} {meta.get('section', '')}"
+                d_tokens = extract_content_tokens(f"{meta_ctx} {doc_text}".strip())
                 if not d_tokens:
-                    d_tokens = set(re.findall(r'\b[a-zA-Z0-9_\-\.]{2,}\b', doc_text.lower()))
+                    d_tokens = set(re.findall(r'\b[a-zA-Z0-9_\-\.]{2,}\b', f"{meta_ctx} {doc_text}".lower()))
                 overlap_ratio = len(q_content & d_tokens) / max(len(q_content), 1)
 
-                hybrid_score = round((cos_sim * 0.4) + (overlap_ratio * 0.6), 4)
+                # Balanced hybrid score combining dense vector cosine similarity and substantive lexical overlap
+                hybrid_score = round((cos_sim * 0.50) + (overlap_ratio * 0.50), 4)
                 chunk_id = meta.get("chunk_id", f"{meta.get('company_doc_id', '')}_{hash(doc_text)}")
                 # Deduplicate by normalized text to ensure distinct evidence chunks across collections
                 dedup_key = doc_text.strip()

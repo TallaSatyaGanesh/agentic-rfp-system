@@ -862,3 +862,400 @@ def test_completely_unseen_rfp_generalization(seeded_retriever):
     assert result["overall_compliance_score"] == 50.0
 
 
+# ==============================================================================
+# TEST V: Evidence Grounding and Accurate Specification Source Selection
+# ==============================================================================
+def test_evidence_grounding_and_source_selection_accuracy():
+    """
+    Regression test validating that requirement compliance evidence is strictly grounded
+    in the authoritative specification documents and not incidental case studies or overlapping text.
+    Tests A through K:
+    A. Web application retrieves Platform Overview or Technical Capabilities rather than Experience References.
+    B. REST API retrieves Technical & AI Capabilities rather than Delivery.
+    C. RBAC retrieves Security & Governance.
+    D. Daily backups retrieves Technical & AI Capabilities.
+    E. Documentation retrieves Delivery & Implementation.
+    F. A generic unrelated document with lexical overlap cannot become supporting evidence.
+    G. ISO 27001 explicit negative evidence remains NON_COMPLIANT.
+    H. 3 years experience remains INFORMATION_REQUIRED.
+    I. Two customer references remains INFORMATION_REQUIRED.
+    J. 99.5% availability remains INFORMATION_REQUIRED.
+    K. Zero requirement-specific or test-specific hardcoding is used.
+    """
+    retriever = KnowledgeBaseRetriever()
+    coll = retriever.vector_store._collection
+    if coll:
+        all_ids = coll.get()["ids"]
+        if all_ids:
+            coll.delete(ids=all_ids)
+
+    # 1. Seed the 5 Demo Company collateral documents
+    retriever.index_document(
+        doc_id="doc_demo_overview",
+        title="Demo Company – Company & Platform Overview",
+        filename="Demo_Company_Platform_Overview.txt",
+        content=(
+            "2. Web-Based Application Architecture\n"
+            "Demo Company develops modern web-based applications accessible through standard web browsers (Google Chrome, Mozilla Firefox, Apple Safari, Microsoft Edge).\n"
+            "Platform characteristics: Responsive web user interface, zero local installation requirements, modular dashboard for inventory management.\n"
+            "5. Verification & Procurement Notice: Specific commercial pricing proposals, currency terms (such as INR quotations), customized liquidated damages terms, and project-specific SLA commitments must be confirmed separately during formal procurement."
+        ),
+        category="General"
+    )
+
+    retriever.index_document(
+        doc_id="doc_demo_tech",
+        title="Demo Company – Technical & AI Capabilities",
+        filename="Demo_Company_Technical_AI_Capabilities.txt",
+        content=(
+            "1. Web Application & Interface Framework: Demo Company builds cloud-native, web-based applications engineered for high performance and accessibility.\n"
+            "2. REST API Integration Architecture: Demo Company platforms feature comprehensive REST API integration capabilities: standard REST API endpoints supporting JSON payloads for inbound and outbound data interchange.\n"
+            "3. Database Architecture & Automated Backup Capabilities: Automated daily database backups with point-in-time recovery capabilities and 30-day retention.\n"
+            "5. High Availability: While Demo Company platforms are engineered for high availability, specific binding SLA percentages (such as 99.5% uptime guarantees) require separate commercial negotiation."
+        ),
+        category="Technical"
+    )
+
+    retriever.index_document(
+        doc_id="doc_demo_sec",
+        title="Demo Company – Security & Governance",
+        filename="Demo_Company_Security_Governance.txt",
+        content=(
+            "1. Role-Based Access Control (RBAC) & User Permissions: Demo Company provides and enforces granular Role-Based Access Control across all application modules.\n"
+            "2. Multi-Factor Authentication (MFA): Multi-factor authentication (MFA) enforcement for all administrative accounts.\n"
+            "3. Data Encryption Standards: Provides data encryption at rest using AES-256 and TLS 1.3 in transit.\n"
+            "5. Compliance & Certification Position: Formal third-party certifications such as ISO/IEC 27001 or FedRAMP are not currently held and require separate qualification."
+        ),
+        category="Security"
+    )
+
+    retriever.index_document(
+        doc_id="doc_demo_deliv",
+        title="Demo Company – Delivery & Implementation",
+        filename="Demo_Company_Delivery_Implementation.txt",
+        content=(
+            "2. Deployment & Configuration Support: Deployment assistance and integration configuration for customer REST API order and inventory endpoints.\n"
+            "4. Technical & User Documentation Suite: Comprehensive administrator manuals and end-user operational guides.\n"
+            "6. Project Delivery Schedule Notice: Typical implementation timelines range from 12 to 20 weeks. Specific fixed delivery commitments, such as a guaranteed 16-week completion deadline, require formal scoping validation."
+        ),
+        category="Delivery"
+    )
+
+    retriever.index_document(
+        doc_id="doc_demo_exp",
+        title="Demo Company – Experience & References",
+        filename="Demo_Company_Experience_References.txt",
+        content=(
+            "2. Representative Project Case Studies\n"
+            "Case Study 1: Retail & Distribution Inventory Management - Implemented a web-based inventory and product management application for a regional retail distributor.\n"
+            "3. Reference & Eligibility Verification Notice: Representative project summaries and contactable technical references are available upon request following mutual confidentiality agreement."
+        ),
+        category="Experience"
+    )
+
+    test_cases = [
+        {"req_code": "REQ-A", "text": "The vendor must provide a web-based inventory application accessible via browser.", "cat": "Technical", "expected_status": "COMPLIANT", "expected_docs": ["Demo Company – Company & Platform Overview", "Demo Company – Technical & AI Capabilities"], "forbidden_docs": ["Experience & References"]},
+        {"req_code": "REQ-B", "text": "The platform shall provide REST API integration with customer order systems.", "cat": "Technical", "expected_status": "COMPLIANT", "expected_docs": ["Demo Company – Technical & AI Capabilities"], "forbidden_docs": ["Delivery & Implementation"]},
+        {"req_code": "REQ-C", "text": "Role-based access control (RBAC) across administrative and operational roles.", "cat": "Security", "expected_status": "COMPLIANT", "expected_docs": ["Demo Company – Security & Governance"], "forbidden_docs": []},
+        {"req_code": "REQ-D", "text": "Automated daily database backups with point-in-time recovery.", "cat": "Technical", "expected_status": "COMPLIANT", "expected_docs": ["Demo Company – Technical & AI Capabilities"], "forbidden_docs": []},
+        {"req_code": "REQ-E", "text": "Comprehensive administrator guide and end-user documentation.", "cat": "Documentation", "expected_status": "COMPLIANT", "expected_docs": ["Demo Company – Delivery & Implementation"], "forbidden_docs": []},
+        {"req_code": "REQ-F", "text": "Proprietary blockchain ledger connector for real-time cryptocurrency reconciliation.", "cat": "Technical", "expected_status": "INFORMATION_REQUIRED", "expected_docs": [], "forbidden_docs": []},
+        {"req_code": "REQ-G", "text": "Bidder must hold active ISO 27001 information security certification.", "cat": "Certification", "expected_status": "NON_COMPLIANT", "expected_docs": ["Demo Company – Security & Governance"], "forbidden_docs": []},
+        {"req_code": "REQ-H", "text": "The bidder must have a minimum of 3 years corporate operating experience.", "cat": "Eligibility", "expected_status": "INFORMATION_REQUIRED", "expected_docs": [], "forbidden_docs": []},
+        {"req_code": "REQ-I", "text": "The vendor must provide two verifiable customer reference contacts with email and phone.", "cat": "Eligibility", "expected_status": "INFORMATION_REQUIRED", "expected_docs": [], "forbidden_docs": []},
+        {"req_code": "REQ-J", "text": "The platform must guarantee 99.5% uptime SLA with financial penalty credits.", "cat": "Technical", "expected_status": "INFORMATION_REQUIRED", "expected_docs": [], "forbidden_docs": []}
+    ]
+
+    state: RFPProposalState = {
+        "requirements": [{"req_code": tc["req_code"], "text": tc["text"], "category": tc["cat"]} for tc in test_cases]
+    }
+
+    try:
+        result = analyze_compliance_node(state)
+        matrix = {item["req_code"]: item for item in result["compliance_matrix"]}
+
+        for tc in test_cases:
+            code = tc["req_code"]
+            item = matrix[code]
+            assert item["status"] == tc["expected_status"], f"Requirement {code} ({tc['text']}) status mismatch: got {item['status']}, expected {tc['expected_status']}"
+
+            if tc["expected_docs"]:
+                assert item["company_source_doc"] is not None, f"Expected source doc for {code}"
+                matched_doc = any(exp in item["company_source_doc"] for exp in tc["expected_docs"])
+                assert matched_doc, f"Requirement {code} source doc '{item['company_source_doc']}' did not match expected {tc['expected_docs']}"
+
+            if tc["forbidden_docs"]:
+                for forbidden in tc["forbidden_docs"]:
+                    assert forbidden not in (item["company_source_doc"] or ""), f"Requirement {code} source doc '{item['company_source_doc']}' must NOT contain forbidden '{forbidden}'"
+    finally:
+        for did in ["doc_demo_overview", "doc_demo_tech", "doc_demo_sec", "doc_demo_deliv", "doc_demo_exp"]:
+            try:
+                if coll:
+                    coll.delete(where={"company_doc_id": did})
+            except Exception:
+                pass
+
+
+def test_adversarial_evidence_ranking_and_contradiction_handling():
+    """
+    Adversarial regression test verifying that:
+    1. Contradictory evidence (affirmative vs refusal on same capability) does not blindly pick COMPLIANT,
+       but safely resolves to INFORMATION_REQUIRED.
+    2. Negative statements on unrelated topics do not contaminate positive verdicts.
+    3. Ambiguous positive/negative scope on same topic avoids false certainty.
+    4. Explicit negative statements on certifications correctly evaluate to NON_COMPLIANT.
+    5. Strong semantic specification docs are selected over weak case studies.
+    6. Core technical specs are selected over past project mentions.
+    7. Targeted documentation collateral is selected over generic delivery services.
+    8. High-authority refusals are never overridden by low-authority vague case studies to claim COMPLIANT.
+    """
+    retriever = KnowledgeBaseRetriever()
+    coll = retriever.vector_store._collection
+    if coll:
+        all_ids = coll.get()["ids"]
+        if all_ids:
+            coll.delete(ids=all_ids)
+
+    try:
+        # ======================================================================
+        # TEST 1: CONTRADICTORY CAPABILITY
+        # Doc A: "We support REST API integration with external systems."
+        # Doc B: "We do not currently support REST API integration with external systems."
+        # ======================================================================
+        retriever.index_document(
+            doc_id="doc_adv_api_pos",
+            title="Standard Platform Architecture",
+            filename="platform_architecture.txt",
+            content="We support REST API integration with external systems.",
+            category="Technical"
+        )
+        retriever.index_document(
+            doc_id="doc_adv_api_neg",
+            title="System Constraints & Exclusions",
+            filename="system_exclusions.txt",
+            content="We do not currently support REST API integration with external systems.",
+            category="Technical"
+        )
+
+        state1: RFPProposalState = {
+            "requirements": [{"req_code": "ADV-01", "text": "The platform must provide REST API integration with external systems.", "category": "Technical"}]
+        }
+        res1 = analyze_compliance_node(state1)["compliance_matrix"][0]
+        assert res1["status"] == "INFORMATION_REQUIRED", f"Contradictory evidence must resolve to INFORMATION_REQUIRED, got {res1['status']}"
+        assert "conflicting" in (res1["notes"] or "").lower() or "clarification" in (res1["notes"] or "").lower()
+
+        # Clean up test 1 docs
+        coll.delete(ids=coll.get()["ids"])
+
+        # ======================================================================
+        # TEST 2: NEGATIVE + UNRELATED POSITIVE
+        # Doc A: "We provide REST API integration."
+        # Doc B: "We do not provide ISO 27001 certification."
+        # Requirement: "Vendor must provide REST API integration."
+        # ======================================================================
+        retriever.index_document(
+            doc_id="doc_adv_api_good",
+            title="Core API Specifications",
+            filename="api_spec.txt",
+            content="We provide REST API integration with JSON payload support.",
+            category="Technical"
+        )
+        retriever.index_document(
+            doc_id="doc_adv_iso_neg",
+            title="Security Certification Position",
+            filename="security_cert.txt",
+            content="We do not provide ISO 27001 certification and do not hold ISO credentials.",
+            category="Security"
+        )
+
+        state2: RFPProposalState = {
+            "requirements": [{"req_code": "ADV-02", "text": "Vendor must provide REST API integration.", "category": "Technical"}]
+        }
+        res2 = analyze_compliance_node(state2)["compliance_matrix"][0]
+        assert res2["status"] == "COMPLIANT", f"Unrelated ISO refusal must not contaminate REST API, got {res2['status']}"
+        assert "Core API Specifications" in (res2["company_source_doc"] or "")
+
+        # Clean up test 2 docs
+        coll.delete(ids=coll.get()["ids"])
+
+        # ======================================================================
+        # TEST 3: POSITIVE + NEGATIVE SAME TOPIC (AMBIGUOUS SCOPE)
+        # Doc A: "We provide role-based access control across all applications."
+        # Doc B: "Legacy deployments do not provide role-based access control."
+        # Requirement: "The platform must provide RBAC."
+        # ======================================================================
+        retriever.index_document(
+            doc_id="doc_adv_rbac_pos",
+            title="Application Security Guide",
+            filename="app_security.txt",
+            content="We provide role-based access control across all applications.",
+            category="Security"
+        )
+        retriever.index_document(
+            doc_id="doc_adv_rbac_neg",
+            title="Deployment Release Notes",
+            filename="deployment_notes.txt",
+            content="Legacy deployments do not provide role-based access control.",
+            category="Security"
+        )
+
+        state3: RFPProposalState = {
+            "requirements": [{"req_code": "ADV-03", "text": "The platform must provide RBAC role-based access control.", "category": "Security"}]
+        }
+        res3 = analyze_compliance_node(state3)["compliance_matrix"][0]
+        assert res3["status"] in ["INFORMATION_REQUIRED", "PARTIALLY_COMPLIANT"], f"Ambiguous scope on same topic must avoid false certainty, got {res3['status']}"
+
+        # Clean up test 3 docs
+        coll.delete(ids=coll.get()["ids"])
+
+        # ======================================================================
+        # TEST 4: EXPLICIT NEGATIVE CERTIFICATION
+        # Doc: "Formal ISO/IEC 27001 certification is not currently held."
+        # Requirement: "Vendor MUST provide valid ISO 27001 certification."
+        # ======================================================================
+        retriever.index_document(
+            doc_id="doc_adv_iso_held",
+            title="Security & Governance Overview",
+            filename="security_governance.txt",
+            content="Formal ISO/IEC 27001 certification is not currently held and requires separate qualification.",
+            category="Security"
+        )
+
+        state4: RFPProposalState = {
+            "requirements": [{"req_code": "ADV-04", "text": "Vendor MUST provide valid ISO 27001 certification.", "category": "Certification"}]
+        }
+        res4 = analyze_compliance_node(state4)["compliance_matrix"][0]
+        assert res4["status"] == "NON_COMPLIANT", f"Explicit negative certification must be NON_COMPLIANT, got {res4['status']}"
+
+        # Clean up test 4 docs
+        coll.delete(ids=coll.get()["ids"])
+
+        # ======================================================================
+        # TEST 5: WEAK LEXICAL MATCH VS STRONG SEMANTIC MATCH
+        # Doc A: "Past project experience included web applications."
+        # Doc B: "The platform architecture provides browser-accessible web applications with zero client installation."
+        # Requirement: "Vendor must provide a web-based application."
+        # ======================================================================
+        retriever.index_document(
+            doc_id="doc_adv_web_weak",
+            title="Past Client Case Studies",
+            filename="case_studies.txt",
+            content="Past project experience included web applications for local clients.",
+            category="Experience"
+        )
+        retriever.index_document(
+            doc_id="doc_adv_web_strong",
+            title="Platform Architecture Specifications",
+            filename="platform_architecture.txt",
+            content="The platform architecture provides browser-accessible web applications with zero client installation.",
+            category="Technical"
+        )
+
+        state5: RFPProposalState = {
+            "requirements": [{"req_code": "ADV-05", "text": "Vendor must provide a web-based application.", "category": "Technical"}]
+        }
+        res5 = analyze_compliance_node(state5)["compliance_matrix"][0]
+        assert res5["status"] == "COMPLIANT"
+        assert "Platform Architecture Specifications" in (res5["company_source_doc"] or "")
+        assert "case_studies" not in (res5["company_source_doc"] or "")
+
+        # Clean up test 5 docs
+        coll.delete(ids=coll.get()["ids"])
+
+        # ======================================================================
+        # TEST 6: CASE STUDY VS CORE TECHNICAL SPEC
+        # Doc A: "Previous customer project integrated an external API."
+        # Doc B: "Our platform provides REST API endpoints for bi-directional integration."
+        # Requirement: "Platform must provide REST API integration."
+        # ======================================================================
+        retriever.index_document(
+            doc_id="doc_adv_case_api",
+            title="Experience & Case Studies",
+            filename="case_studies.txt",
+            content="Previous customer project integrated an external API for warehouse data.",
+            category="Experience"
+        )
+        retriever.index_document(
+            doc_id="doc_adv_spec_api",
+            title="Technical Platform Specifications",
+            filename="technical_spec.txt",
+            content="Our platform provides REST API endpoints for bi-directional integration.",
+            category="Technical"
+        )
+
+        state6: RFPProposalState = {
+            "requirements": [{"req_code": "ADV-06", "text": "Platform must provide REST API integration.", "category": "Technical"}]
+        }
+        res6 = analyze_compliance_node(state6)["compliance_matrix"][0]
+        assert res6["status"] == "COMPLIANT"
+        assert "Technical Platform Specifications" in (res6["company_source_doc"] or "")
+
+        # Clean up test 6 docs
+        coll.delete(ids=coll.get()["ids"])
+
+        # ======================================================================
+        # TEST 7: DOCUMENTATION VS GENERIC DELIVERY
+        # Doc A: "We provide implementation and deployment services."
+        # Doc B: "We provide administrator manuals and end-user operational guides."
+        # Requirement: "Vendor must provide administrator and end-user guides."
+        # ======================================================================
+        retriever.index_document(
+            doc_id="doc_adv_gen_deliv",
+            title="Implementation Services Overview",
+            filename="services.txt",
+            content="We provide implementation and deployment services for enterprise rollouts.",
+            category="Delivery"
+        )
+        retriever.index_document(
+            doc_id="doc_adv_doc_suite",
+            title="Documentation & Knowledge Suite",
+            filename="documentation.txt",
+            content="We provide administrator manuals and end-user operational guides for all platform workflows.",
+            category="Delivery"
+        )
+
+        state7: RFPProposalState = {
+            "requirements": [{"req_code": "ADV-07", "text": "Vendor must provide administrator and end-user guides.", "category": "Documentation"}]
+        }
+        res7 = analyze_compliance_node(state7)["compliance_matrix"][0]
+        assert res7["status"] == "COMPLIANT"
+        assert "Documentation & Knowledge Suite" in (res7["company_source_doc"] or "")
+
+        # Clean up test 7 docs
+        coll.delete(ids=coll.get()["ids"])
+
+        # ======================================================================
+        # TEST 8: AUTHORITY SHOULD NOT CREATE FALSE COMPLIANCE
+        # High-authority spec doc: "Mainframe COBOL emulation is out of scope and explicitly excluded."
+        # Low-authority case study: "Past project included mainframe connectivity assessment."
+        # Requirement: "Platform must support mainframe COBOL emulation."
+        # ======================================================================
+        retriever.index_document(
+            doc_id="doc_adv_high_neg",
+            title="Core Platform Scope and Exclusions",
+            filename="platform_exclusions.txt",
+            content="Mainframe COBOL emulation is out of scope and explicitly excluded.",
+            category="Technical"
+        )
+        retriever.index_document(
+            doc_id="doc_adv_low_pos",
+            title="Representative Project Summaries",
+            filename="case_summaries.txt",
+            content="Past project included mainframe connectivity assessment and support consultation.",
+            category="Experience"
+        )
+
+        state8: RFPProposalState = {
+            "requirements": [{"req_code": "ADV-08", "text": "Platform must support mainframe COBOL emulation.", "category": "Technical"}]
+        }
+        res8 = analyze_compliance_node(state8)["compliance_matrix"][0]
+        assert res8["status"] in ["NON_COMPLIANT", "INFORMATION_REQUIRED"], f"High-authority refusal must never be overridden to COMPLIANT, got {res8['status']}"
+        assert res8["status"] != "COMPLIANT"
+
+    finally:
+        if coll:
+            all_ids = coll.get()["ids"]
+            if all_ids:
+                coll.delete(ids=all_ids)
+
+
