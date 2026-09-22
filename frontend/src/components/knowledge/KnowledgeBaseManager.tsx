@@ -75,9 +75,12 @@ export const KnowledgeBaseManager: React.FC = () => {
             <Database className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="font-bold text-base text-slate-900">Company Knowledge Base & Grounding RAG</h3>
+            <h3 className="font-bold text-base text-slate-900">Demo Company Knowledge Base & Grounding RAG</h3>
             <p className="text-xs text-slate-500">
-              Upload verified corporate policies, white papers, and past proposals to prevent hallucinations
+              Upload verified corporate policies, white papers, and past proposals to prevent hallucinations.
+            </p>
+            <p className="text-[11px] text-amber-600 font-medium mt-0.5">
+              Demo data — replace with authorized company documents for production use.
             </p>
           </div>
         </div>

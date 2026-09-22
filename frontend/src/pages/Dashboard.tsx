@@ -169,7 +169,7 @@ export const Dashboard: React.FC<Props> = ({ onSelectRFP, onNavigateKnowledge })
               onClick={onNavigateKnowledge}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
             >
-              <Database className="w-4 h-4 text-sky-400" /> Manage Company Knowledge Base
+              <Database className="w-4 h-4 text-sky-400" /> Manage Demo Knowledge Base
             </button>
           </div>
         </div>

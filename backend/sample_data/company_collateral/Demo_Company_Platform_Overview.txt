@@ -1,0 +1,34 @@
+DEMO DATA — Synthetic company knowledge created for assignment evaluation. Not official Brightcone.ai company documentation.
+
+DEMO COMPANY – COMPANY & PLATFORM OVERVIEW
+Enterprise Software & Intelligent Systems
+
+1. Company Profile & Overview
+Demo Company is an enterprise software organization specializing in modern, cloud-native web applications, workflow automation, and intelligent system integration.
+
+Demo Company provides modular software platforms designed to modernize business operations across retail, logistics, healthcare operations, financial workflows, and enterprise management.
+
+2. Web-Based Application Architecture
+Demo Company develops modern web-based applications accessible through standard web browsers (Google Chrome, Mozilla Firefox, Apple Safari, Microsoft Edge). 
+
+Platform characteristics:
+- Responsive, intuitive web user interface
+- Cross-platform browser compatibility with zero local installation requirements
+- Centralized web portal for administrative, operational, and reporting workflows
+- Modular dashboard for inventory management, product catalogs, order processing, and user administration
+
+3. Core Platform Capabilities
+The Demo Company platform provides:
+- Web-based application management
+- RESTful API integration framework
+- Role-based access control (RBAC) and user administration
+- Automated database backup and disaster recovery
+- End-to-end data encryption and comprehensive audit logging
+- Technical and user documentation suite
+- Structured deployment, user training, and ongoing support services
+
+4. Enterprise Integrations & REST Architecture
+The platform is built on an open, API-first architecture supporting REST API endpoints with standard JSON payloads for seamless integration with external inventory, ERP, CRM, and order management systems.
+
+5. Verification & Procurement Notice
+This document outlines standard Demo Company platform capabilities for evaluation purposes. Specific commercial pricing proposals, currency terms (such as INR quotations), customized liquidated damages terms, and project-specific SLA commitments must be confirmed separately during formal procurement.

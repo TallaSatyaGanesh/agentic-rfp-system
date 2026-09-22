@@ -1,0 +1,31 @@
+DEMO DATA — Synthetic company knowledge created for assignment evaluation. Not official Brightcone.ai company documentation.
+
+DEMO COMPANY – EXPERIENCE & REFERENCES
+Enterprise Track Record, Project Case Studies & Client Engagements
+
+1. Enterprise Software Experience
+Demo Company has demonstrated software engineering expertise across diverse commercial sectors:
+- Retail and inventory management solutions
+- Multi-channel supply chain order coordination
+- Healthcare operations and secure workflow portals
+- Logistics coordination and dispatch tracking applications
+
+2. Representative Project Case Studies
+Case Study 1: Retail & Distribution Inventory Management
+- Implemented a web-based inventory and product management application for a regional retail distributor.
+- Built automated REST API integration with external warehouse inventory systems for real-time stock level synchronization with JSON payloads.
+- Configured role-based access control (RBAC) across Admin, Warehouse Staff, and Auditor user groups.
+- Delivered full administrator manuals, user guides, and staff training for 15 operational users.
+
+Case Study 2: Enterprise Operations & Order Portal
+- Developed a cloud-hosted web portal for order intake and customer fulfillment.
+- Deployed automated daily database backups with a 30-day retention policy and AES-256 encryption at rest.
+- Established comprehensive audit logging for transactional modifications and security events.
+- Provided post-deployment technical support and maintenance services.
+
+Case Study 3: Secure Healthcare Workflow Application
+- Designed a secure web application supporting multi-factor authentication (MFA) and TLS 1.3 data encryption in transit.
+- Implemented strict audit trails and role-based permissions in compliance with healthcare security safeguards.
+
+3. Reference & Eligibility Verification Notice
+Representative project summaries and contactable technical references are available upon request following mutual confidentiality agreement. Formal corporate eligibility prerequisites, such as certified multi-year incorporation documentation or formal tender reference forms, are provided during commercial qualification.

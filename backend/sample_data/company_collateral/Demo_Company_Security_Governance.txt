@@ -1,0 +1,30 @@
+DEMO DATA — Synthetic company knowledge created for assignment evaluation. Not official Brightcone.ai company documentation.
+
+DEMO COMPANY – SECURITY & GOVERNANCE
+Access Control, Encryption, Audit Logging & Compliance
+
+1. Role-Based Access Control (RBAC) & User Permissions
+Demo Company provides and enforces granular Role-Based Access Control across all application modules:
+- Supports tiered user roles and permissions including Admin, Administrator, Staff, Auditor, Manager, and Viewer
+- Principle of least privilege enforced for all data access and configuration actions
+- Provides user session management and granular permission assignment per department or organizational role
+
+2. Multi-Factor Authentication (MFA)
+Demo Company implements and enforces strong identity protection:
+- Multi-factor authentication (MFA) enforcement for all administrative accounts, admin users, and privileged operations
+- Supports standard time-based one-time password (TOTP) authenticators and enterprise SSO integrations
+
+3. Data Encryption Standards
+Demo Company ensures all customer data is protected and encrypted throughout its lifecycle:
+- Provides data encryption at rest using industry-standard AES-256 encryption algorithms
+- Ensures data in transit is encrypted using Transport Layer Security TLS 1.3 across all public and internal network communications
+- Secured cryptographic key management and automated certificate rotation
+
+4. Comprehensive Audit Logging & Security Monitoring
+Demo Company provides complete visibility and security traceability:
+- Features comprehensive audit logging for all transactional modifications, inventory adjustments, record deletions, and security events
+- Provides immutable audit log records with user identification, client IP, action type, and precise UTC timestamps
+- Includes security event monitoring and automated alerting on suspicious access attempts
+
+5. Compliance & Certification Position
+Demo Company maintains a robust security architecture aligned with SOC 2 Type II principles and HIPAA-ready data handling safeguards. Formal third-party certifications such as ISO/IEC 27001 or FedRAMP are not currently held and require separate qualification where specified.

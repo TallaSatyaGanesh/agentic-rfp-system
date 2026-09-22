@@ -29,8 +29,8 @@ def test_company_document_upload_supabase_sync_mocked():
         mock_post.status_code = 200
 
         doc_id = "doc_sync_test_001"
-        filename = "Brightcone_Platform_Spec.txt"
-        sample_bytes = b"Brightcone provides an enterprise agentic AI platform."
+        filename = "Demo_Platform_Spec.txt"
+        sample_bytes = b"Demo Company provides an enterprise software platform."
 
         with patch("httpx.Client.post", return_value=mock_post) as post_call:
             local_path = StorageService.upload_company_document(doc_id, filename, sample_bytes)
@@ -52,8 +52,8 @@ def test_ensure_local_company_file_recovery_from_supabase():
          patch.object(settings, "SUPABASE_STORAGE_BUCKET", "rfp-documents"):
 
         doc_id = "doc_recover_test_002"
-        filename = "Brightcone_Security_Doc.txt"
-        sample_bytes = b"Brightcone enforces granular role-based access control and governance."
+        filename = "Demo_Security_Doc.txt"
+        sample_bytes = b"Demo Company enforces granular role-based access control and governance."
 
         mock_get = MagicMock()
         mock_get.status_code = 200
@@ -81,11 +81,11 @@ def test_sync_knowledge_base_from_db_idempotency_and_recovery(tmp_path):
     """
     client = TestClient(app)
     db = db_module.SessionLocal()
-    doc_id = "doc_brightcone_sync_001"
-    filename = "Brightcone_Test_Overview.txt"
+    doc_id = "doc_demo_sync_001"
+    filename = "Demo_Test_Overview.txt"
 
     # Create local source file
-    doc_content = "Brightcone.ai provides an enterprise agentic AI platform designed to coordinate AI agents across business workflows with strict policy-as-code governance."
+    doc_content = "Demo Company provides an enterprise software platform designed to coordinate web applications across business workflows with strict access governance."
     local_dir = os.path.join(settings.UPLOAD_DIR, "company")
     os.makedirs(local_dir, exist_ok=True)
     file_path = os.path.join(local_dir, f"{doc_id}_{filename}")
@@ -96,7 +96,7 @@ def test_sync_knowledge_base_from_db_idempotency_and_recovery(tmp_path):
         # Register in database
         company_doc = CompanyDocument(
             id=doc_id,
-            title="Brightcone Test Overview",
+            title="Demo Company Test Overview",
             filename=filename,
             file_path=file_path,
             category="Technical",
@@ -118,7 +118,7 @@ def test_sync_knowledge_base_from_db_idempotency_and_recovery(tmp_path):
         assert count_after_first > 0
 
         # 3. Test search retrieval against recovered vector
-        results = retriever.retrieve_relevant_evidence("agentic AI platform governance", top_k=3, threshold=0.1)
+        results = retriever.retrieve_relevant_evidence("enterprise software platform access governance", top_k=3, threshold=0.1)
         assert len(results) > 0
         assert any(r["company_doc_id"] == doc_id for r in results)
 

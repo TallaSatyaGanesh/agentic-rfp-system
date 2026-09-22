@@ -1,0 +1,33 @@
+DEMO DATA — Synthetic company knowledge created for assignment evaluation. Not official Brightcone.ai company documentation.
+
+DEMO COMPANY – TECHNICAL & AI CAPABILITIES
+Architecture, APIs, Data Management & Intelligent Services
+
+1. Web Application & Interface Framework
+Demo Company builds cloud-native, web-based applications engineered for high performance and accessibility:
+- Modern web application architecture accessible via standard web browsers
+- Responsive user interface supporting inventory management, product catalogs, order tracking, and system administration
+- Pure browser-based client requiring no proprietary desktop plugins
+
+2. REST API Integration Architecture
+Demo Company platforms feature comprehensive REST API integration capabilities:
+- Standard REST API endpoints supporting JSON payloads for inbound and outbound data synchronization
+- Bi-directional REST API integration for external inventory syncing, catalog updates, and order fulfillment
+- Webhook support for real-time transactional notifications
+- Secure API authentication and rate-limiting controls
+
+3. Database Architecture & Automated Backup Capabilities
+The data layer utilizes enterprise relational and document database systems:
+- Automated daily database backups with point-in-time recovery capabilities
+- Configurable 30-day retention schedule for automated backup snapshots
+- Automated backup integrity verification and disaster recovery procedures
+- Multi-zone data replication for high data durability
+
+4. Retrieval-Augmented Generation & AI Services
+Demo Company incorporates intelligent information retrieval:
+- Vector-based semantic search and retrieval-augmented generation (RAG)
+- Grounded contextual search over verified organizational documentation
+- Automated document analysis and multi-agent workflow orchestration
+
+5. High Availability & Service Infrastructure
+The platform is hosted on resilient cloud infrastructure with multi-zone redundancy and automated failover. While Demo Company platforms are engineered for continuous operational availability, formal contractual service level agreements (such as a guaranteed 99.5% uptime SLA) are defined separately in project-specific service contracts.
