@@ -79,8 +79,8 @@ export const KnowledgeBaseManager: React.FC = () => {
             <p className="text-xs text-slate-500">
               Upload verified corporate policies, white papers, and past proposals to prevent hallucinations.
             </p>
-            <p className="text-[11px] text-amber-600 font-medium mt-0.5">
-              Demo data — replace with authorized company documents for production use.
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Demonstration knowledge base — synthetic data used for assignment evaluation. Replace with authorized company documents for production deployment.
             </p>
           </div>
         </div>
