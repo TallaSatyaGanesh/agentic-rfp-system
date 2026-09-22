@@ -62,6 +62,39 @@ def seeded_retriever():
         section="Exclusions"
     )
 
+    # 4. REST API & Web Capabilities (Fully compliant)
+    retriever.index_document(
+        doc_id="comp_api_test_04",
+        title="REST API & Web Integration Guide",
+        filename="api_guide.txt",
+        content=(
+            "Acme Cloud builds modern cloud-native web-based applications accessible via standard web browsers. "
+            "Features comprehensive RESTful API integration capabilities: "
+            "Standard REST API endpoints supporting JSON payloads for inbound and outbound data synchronization. "
+            "Bi-directional REST API integration for external inventory syncing, catalog updates, and order fulfillment. "
+            "Enforces multi-factor authentication (MFA) across all administrative accounts."
+        ),
+        category="Technical",
+        page_number=6,
+        section="API Architecture"
+    )
+
+    # 5. Technical Documentation Suite (Fully compliant)
+    retriever.index_document(
+        doc_id="comp_doc_test_05",
+        title="Technical & User Documentation Suite",
+        filename="documentation_suite.txt",
+        content=(
+            "Acme provides thorough, up-to-date documentation: "
+            "Comprehensive administrator manuals detailing configuration, user permissions, and backup management; "
+            "End-user operational guides explaining everyday workflows, inventory adjustment, and reporting functions; "
+            "Developer technical documentation including OpenAPI/Swagger specifications for all REST API endpoints."
+        ),
+        category="Documentation",
+        page_number=10,
+        section="Documentation"
+    )
+
     return retriever
 
 
@@ -637,4 +670,195 @@ def test_fallback_evaluator_never_uses_score_alone():
     )
     assert item2.status == "INFORMATION_REQUIRED"
     assert item2.confidence == 0.0
+
+
+# ==============================================================================
+# TEST Q: Wording Variations for Core Supported Capabilities
+# ==============================================================================
+def test_wording_variations_supported_capabilities(seeded_retriever):
+    """
+    Verifies that various natural phrasing styles of supported capabilities
+    (REST API, Web UI, Backups, MFA, Documentation) evaluate accurately to COMPLIANT.
+    """
+    variations = [
+        "The system must provide REST API integration supporting standard JSON payloads.",
+        "RESTful API endpoints for inbound data synchronization.",
+        "Integration through REST endpoints with automated webhooks.",
+        "Web-based application accessible via modern web browsers with responsive interface.",
+        "Automated daily database backups with point-in-time recovery.",
+        "Multi-factor authentication (MFA) enforcement for administrator accounts.",
+        "Comprehensive administrator manuals and end-user operational guides."
+    ]
+
+    # Index additional documentation and web capabilities into seeded retriever
+    seeded_retriever.index_document(
+        doc_id="comp_doc_test_04",
+        title="Technical & User Documentation Suite",
+        filename="documentation_suite.txt",
+        content=(
+            "Demo Company provides thorough, up-to-date documentation: "
+            "Comprehensive administrator manuals detailing configuration, user permissions, and backup management; "
+            "End-user operational guides explaining everyday workflows, inventory adjustment, and reporting functions; "
+            "Developer technical documentation including OpenAPI/Swagger specifications for all REST API endpoints."
+        ),
+        category="Documentation"
+    )
+    seeded_retriever.index_document(
+        doc_id="comp_web_test_05",
+        title="Web Platform Overview",
+        filename="platform_overview.txt",
+        content=(
+            "Demo Company builds modern web-based applications accessible through standard web browsers. "
+            "Features responsive user interface, RESTful API integration framework, and multi-factor authentication (MFA) enforcement."
+        ),
+        category="Technical"
+    )
+
+    state: RFPProposalState = {
+        "requirements": [
+            {"req_code": f"REQ-VAR-{i}", "text": text, "category": "Technical"}
+            for i, text in enumerate(variations, 1)
+        ]
+    }
+
+    result = analyze_compliance_node(state)
+    matrix = result["compliance_matrix"]
+
+    for item in matrix:
+        assert item["status"] == "COMPLIANT", f"Failed for requirement: {item['requirement_text']}"
+        assert item["confidence"] >= 0.75
+        assert item["evidence_text"] is not None
+
+
+# ==============================================================================
+# TEST R: Strict Rejection of Unsupported Capabilities
+# ==============================================================================
+def test_unsupported_capabilities_strict_rejection(seeded_retriever):
+    """
+    Verifies that capabilities not present in the knowledge base (or explicitly excluded)
+    strictly yield INFORMATION_REQUIRED or NON_COMPLIANT, never COMPLIANT.
+    """
+    unsupported = [
+        ("REQ-UNSUPP-1", "Vendor must possess ISO/IEC 27001 Information Security certification.", "Certification"),
+        ("REQ-UNSUPP-2", "Solution must feature quantum key distribution encryption hardware.", "Technical"),
+        ("REQ-UNSUPP-3", "Vendor shall provide 24/7 on-site emergency dispatch technicians.", "Support"),
+        ("REQ-UNSUPP-4", "Physical courier delivery of cryptographic token cards within 4 hours.", "Delivery"),
+        ("REQ-UNSUPP-5", "Contractor must maintain FedRAMP High provisional authorization.", "Compliance")
+    ]
+
+    state: RFPProposalState = {
+        "requirements": [
+            {"req_code": code, "text": text, "category": cat}
+            for code, text, cat in unsupported
+        ]
+    }
+
+    result = analyze_compliance_node(state)
+    matrix = result["compliance_matrix"]
+
+    for item in matrix:
+        assert item["status"] in ["INFORMATION_REQUIRED", "NON_COMPLIANT"], f"Must not be compliant: {item['requirement_text']}"
+        assert item["status"] != "COMPLIANT"
+
+
+# ==============================================================================
+# TEST S: Customer-Specific Context Tolerance vs Specific Proprietary Requirement
+# ==============================================================================
+def test_customer_context_tolerance_vs_proprietary_requirement(seeded_retriever):
+    """
+    Case 1: 'REST API integration with customer order system' -> COMPLIANT (REST API capability verified).
+    Case 2: 'Native proprietary SAP S/4HANA ABAP direct connector' -> INFORMATION_REQUIRED (SAP ABAP connector unverified).
+    """
+    state: RFPProposalState = {
+        "requirements": [
+            {
+                "req_code": "REQ-CUST-1",
+                "text": "The platform MUST provide REST API integration with the customer order system.",
+                "category": "Technical"
+            },
+            {
+                "req_code": "REQ-CUST-2",
+                "text": "Vendor MUST provide native proprietary SAP S/4HANA ABAP direct connector.",
+                "category": "Technical"
+            }
+        ]
+    }
+
+    result = analyze_compliance_node(state)
+    matrix = result["compliance_matrix"]
+
+    status_map = {item["req_code"]: item["status"] for item in matrix}
+    assert status_map["REQ-CUST-1"] == "COMPLIANT", "General REST API capability with customer context should be compliant"
+    assert status_map["REQ-CUST-2"] == "INFORMATION_REQUIRED", "Specific proprietary unverified SAP connector must be INFORMATION_REQUIRED"
+
+
+# ==============================================================================
+# TEST T: Diverse Requirement Formatting & Prefix Resilience
+# ==============================================================================
+def test_diverse_formatting_resilience(seeded_retriever):
+    """
+    Verifies that different requirement formatting styles (prefixes, section numbers, long/short text)
+    retrieve and evaluate the underlying capability identically.
+    """
+    test_formats = [
+        "REQ-TECH-004 Technical The platform SHOULD provide automated daily database backups.",
+        "Section 8.2 Backup Services: The contractor must maintain automated daily database backups.",
+        "MANDATORY-01 Automated daily database backups with 30-day retention.",
+        "R-SEC-99 Automated daily database backups.",
+        "Automated daily database backups."
+    ]
+
+    state: RFPProposalState = {
+        "requirements": [
+            {"req_code": f"REQ-FMT-{i}", "text": text, "category": "Technical"}
+            for i, text in enumerate(test_formats, 1)
+        ]
+    }
+
+    result = analyze_compliance_node(state)
+    matrix = result["compliance_matrix"]
+
+    for item in matrix:
+        assert item["status"] == "COMPLIANT", f"Formatting failed for: {item['requirement_text']}"
+        assert item["confidence"] >= 0.75
+
+
+# ==============================================================================
+# TEST U: Completely Unseen Synthetic RFP Generalization
+# ==============================================================================
+def test_completely_unseen_rfp_generalization(seeded_retriever):
+    """
+    Tests an end-to-end batch evaluation of a novel synthetic RFP with mixed capabilities:
+    - 4 Supported: Web UI, REST API, Database backups, MFA
+    - 4 Unsupported: ISO 27001, Quantum Encryption, 24/7 on-site support, FedRAMP High
+    Verifies that the overall compliance score reflects the true proportion (50.0%) without hardcoding.
+    """
+    novel_rfp_requirements = [
+        {"req_code": "LOG-SYS-01", "text": "Cloud-native web-based application accessible via standard browsers.", "category": "Technical"},
+        {"req_code": "LOG-API-02", "text": "RESTful API integration supporting JSON payloads and automated synchronization.", "category": "Technical"},
+        {"req_code": "LOG-DAT-03", "text": "Automated daily database backups with point-in-time recovery and retention.", "category": "Technical"},
+        {"req_code": "LOG-SEC-04", "text": "Multi-factor authentication enforcement for administrative users.", "category": "Security"},
+        {"req_code": "LOG-ISO-05", "text": "Vendor must possess ISO/IEC 27001 certification.", "category": "Certification"},
+        {"req_code": "LOG-CRY-06", "text": "Quantum key distribution hardware encryption.", "category": "Security"},
+        {"req_code": "LOG-SUP-07", "text": "24/7 on-site emergency technician dispatch.", "category": "Support"},
+        {"req_code": "LOG-FED-08", "text": "FedRAMP High provisional authorization.", "category": "Compliance"},
+    ]
+
+    state: RFPProposalState = {
+        "requirements": novel_rfp_requirements
+    }
+
+    result = analyze_compliance_node(state)
+    matrix = result["compliance_matrix"]
+
+    assert len(matrix) == 8
+    compliant_items = [item for item in matrix if item["status"] == "COMPLIANT"]
+    info_req_items = [item for item in matrix if item["status"] in ["INFORMATION_REQUIRED", "NON_COMPLIANT"]]
+
+    assert len(compliant_items) == 4, "Exactly 4 supported items must be COMPLIANT"
+    assert len(info_req_items) == 4, "Exactly 4 unsupported items must be INFORMATION_REQUIRED / NON_COMPLIANT"
+
+    # Overall compliance score: 4/8 * 100 = 50.0%
+    assert result["overall_compliance_score"] == 50.0
+
 

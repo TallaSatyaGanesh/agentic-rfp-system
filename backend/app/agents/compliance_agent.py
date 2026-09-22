@@ -6,15 +6,16 @@ from app.agents.state import RFPProposalState
 from app.agents.llm_factory import LLMFactory
 from app.core.prompts import COMPLIANCE_AGENT_PROMPT
 from app.models.schemas import ComplianceItem, ComplianceAgentOutput
-from app.rag.retriever import KnowledgeBaseRetriever
+from app.rag.retriever import KnowledgeBaseRetriever, sanitize_requirement_query
 from app.core.config import settings
 
 # Explicit non-compliance patterns in company collateral
 NON_COMPLIANT_PATTERNS = re.compile(
     r'\b(?:not\s+supported|unsupported|does\s+not\s+support|cannot\s+support|out\s+of\s+scope|'
     r'not\s+offered|cannot\s+provide|unavailable|no\s+plans\s+to\s+support|explicitly\s+excluded|'
+    r'not\s+held|not\s+currently\s+held|not\s+certified|unheld|cannot\s+comply|not\s+compliant|'
     r'business\s+hours\s+only|available\s+only\s+during\s+business\s+hours|not\s+available|'
-    r'does\s+not\s+provide|cannot\s+comply|not\s+compliant)\b',
+    r'does\s+not\s+provide)\b',
     re.IGNORECASE
 )
 
@@ -31,7 +32,10 @@ PARTIAL_COMPLIANT_PATTERNS = re.compile(
 AFFIRMATIVE_PATTERNS = re.compile(
     r'\b(?:guarantees|guarantee|guaranteed|supports|support|supported|provides|provide|provided|'
     r'operates|certified|compliance|compliant|complies|adheres|features|includes|included|'
-    r'secured|encrypted|backed|native|implements|ensures|retention|replicated)\b',
+    r'secured|encrypted|backed|native|implements|ensures|retention|replicated|'
+    r'develops|develop|developed|builds|build|built|delivers|deliver|delivered|'
+    r'engineered|maintains|maintain|offers|offer|designs|designed|available|compatible|'
+    r'enforces|enforce|timelines|scoping|commitments|methodology|architecture)\b',
     re.IGNORECASE
 )
 
@@ -71,11 +75,24 @@ def analyze_compliance_node(state: RFPProposalState) -> Dict[str, Any]:
         req_text = req.get("text", "")
         category = req.get("category", "General")
 
-        # 1. Retrieve evidence from company knowledge base
+        # 1. Retrieve evidence from company knowledge base using sanitized core query and domain keywords
+        clean_req_text = sanitize_requirement_query(req_text)
+        domain_terms = _extract_domain_terms(clean_req_text or req_text)
+        # Prioritize distinctive domain terms (longer words, numbers/metrics) for fallback queries
+        sorted_terms = sorted(domain_terms, key=lambda t: (any(c.isdigit() for c in t), len(t)), reverse=True)
+        domain_kw = " ".join(sorted_terms[:6]) if sorted_terms else ""
+        
+        fallback_queries: List[str] = []
+        if req_text and req_text != clean_req_text:
+            fallback_queries.append(req_text)
+        if domain_kw and domain_kw != clean_req_text:
+            fallback_queries.append(domain_kw)
+
         evidence_list = retriever.retrieve_relevant_evidence(
-            query=req_text,
+            query=clean_req_text or req_text,
             top_k=settings.RAG_TOP_K,
-            threshold=settings.SIMILARITY_THRESHOLD
+            threshold=settings.SIMILARITY_THRESHOLD,
+            fallback_queries=fallback_queries
         )
 
         # 2. PROGRAMMATIC SAFETY GATE:
@@ -117,7 +134,17 @@ def analyze_compliance_node(state: RFPProposalState) -> Dict[str, Any]:
             for ev in evidence_list
         ]
 
+        # Select best candidate evidence chunk:
+        # Check if any candidate chunk provides definitive COMPLIANT or explicit NON_COMPLIANT evidence
         best_evidence = evidence_list[0]
+        for ev_cand in evidence_list:
+            cand_status, _, _ = _evaluate_semantic_compliance(clean_req_text or req_text, ev_cand.get("evidence_text", ""))
+            if cand_status == "COMPLIANT":
+                best_evidence = ev_cand
+                break
+            elif cand_status == "NON_COMPLIANT" and best_evidence == evidence_list[0]:
+                best_evidence = ev_cand
+
         evidence_text = best_evidence.get("evidence_text", "")
         source_doc = f"{best_evidence.get('document_title')} ({best_evidence.get('filename')})"
         sim_score = best_evidence.get("similarity", 0.0)
@@ -191,18 +218,32 @@ def analyze_compliance_node(state: RFPProposalState) -> Dict[str, Any]:
     }
 
 
+def _is_structural_noise(term: str) -> bool:
+    """Identifies artificial RFP requirement codes with prefixes like req-tech-001, r-sec-99, clause-2.1."""
+    if not term or len(term) < 2:
+        return True
+    # Match structural requirement ID codes like req-tech-001, r-sec-99, schedule-phase-1, clause-2.1
+    if re.match(r'^(?:req|rfp|sec|doc|tech|del|comm|cert|elig|sub|con|opt|man|mandatory|clause|schedule|part|field|integ|train|crypto)[-_][a-z0-9_\.-]+$', term, re.IGNORECASE):
+        return True
+    return False
+
+
 def _extract_domain_terms(text: str) -> Set[str]:
-    """Extracts distinctive meaningful domain terms from requirement or evidence text."""
-    raw_tokens = re.findall(r'\b[a-zA-Z0-9_\-\.%]{2,}\b', text.lower())
-    terms = set()
+    """
+    Extracts distinctive meaningful domain terms from requirement or evidence text.
+    Strips leading structural prefixes and excludes artificial ID tokens (e.g. '001', 'req-tech-001').
+    """
+    clean_text = sanitize_requirement_query(text)
+    raw_tokens = re.findall(r'\b[a-zA-Z0-9_\-\.%]{2,}\b', clean_text.lower())
+    terms: Set[str] = set()
     for tok in raw_tokens:
         tok_clean = tok.strip(".-")
-        if tok_clean and tok_clean not in GENERIC_RFP_WORDS and len(tok_clean) >= 2:
+        if tok_clean and tok_clean not in GENERIC_RFP_WORDS and len(tok_clean) >= 2 and not _is_structural_noise(tok_clean):
             terms.add(tok_clean)
             if "-" in tok_clean:
                 for sub in tok_clean.split("-"):
                     sub_clean = sub.strip(".-")
-                    if sub_clean and sub_clean not in GENERIC_RFP_WORDS and len(sub_clean) >= 2:
+                    if sub_clean and sub_clean not in GENERIC_RFP_WORDS and len(sub_clean) >= 2 and not _is_structural_noise(sub_clean):
                         terms.add(sub_clean)
     return terms
 
