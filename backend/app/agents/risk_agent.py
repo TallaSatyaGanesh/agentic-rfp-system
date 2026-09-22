@@ -136,7 +136,10 @@ def assess_risks_node(state: RFPProposalState) -> Dict[str, Any]:
                     f"1. Generate evidence-grounded risks with calibrated severity (CRITICAL, HIGH, MEDIUM, LOW).\n"
                     f"2. Formulate specific clarification questions for items with missing/partial information.\n"
                     f"3. Tie every item strictly to its originating requirement_id.\n"
-                    f"4. NEVER invent facts, capabilities, certifications, or commitments."
+                    f"4. NEVER mix, borrow, or cite evidence snippets from one requirement into another requirement.\n"
+                    f"5. If a requirement is NON_COMPLIANT or PARTIALLY_COMPLIANT, cite ONLY its own evidence snippet or notes.\n"
+                    f"6. If a requirement is INFORMATION_REQUIRED, state that verification is missing and DO NOT attach collateral evidence from other requirements.\n"
+                    f"7. NEVER invent facts, capabilities, certifications, or commitments."
                 )
 
                 structured_agent = llm.with_structured_output(RiskAndClarificationOutput)
@@ -262,6 +265,64 @@ def _sanitize_unverified_claim(text: str, req_id: str) -> str:
     return text
 
 
+def _sanitize_cross_requirement_evidence(
+    text: str,
+    target_req_id: str,
+    target_req_text: str,
+    target_comp: Dict[str, Any],
+    comp_map: Dict[str, Dict[str, Any]],
+    req_map: Dict[str, Dict[str, Any]]
+) -> str:
+    """
+    Prevents cross-requirement evidence contamination by verifying that text does not
+    borrow evidence snippets, limitation notes, or citations from other requirements.
+    """
+    if not text or not target_req_id:
+        return text
+
+    status = target_comp.get("status", "INFORMATION_REQUIRED")
+    target_ev = target_comp.get("evidence_text") or ""
+    target_notes = target_comp.get("notes") or ""
+
+    # Check if foreign evidence from other requirements in comp_map was inserted into text
+    is_contaminated = False
+    for other_id, other_comp in comp_map.items():
+        if other_id == target_req_id:
+            continue
+
+        other_ev = other_comp.get("evidence_text") or ""
+        other_notes = other_comp.get("notes") or ""
+
+        # Check chunks of other evidence (e.g. sentences or phrases >= 20 chars)
+        for candidate_src in [other_ev, other_notes]:
+            if not candidate_src or len(candidate_src) < 20:
+                continue
+            segments = [s.strip() for s in re.split(r'[\n\.\;\:]+', candidate_src) if len(s.strip()) >= 20]
+            for seg in segments:
+                if seg.lower() in text.lower() and seg.lower() not in target_req_text.lower() and seg.lower() not in target_ev.lower() and seg.lower() not in target_notes.lower():
+                    is_contaminated = True
+                    break
+            if is_contaminated:
+                break
+        if is_contaminated:
+            break
+
+    # If contaminated, deterministically rebuild text strictly grounded on target requirement
+    if is_contaminated:
+        if status == "NON_COMPLIANT":
+            limitation = target_ev[:140] if target_ev else (target_notes[:140] if target_notes else "Documented limitation in company collateral indicates requirement is unsupported.")
+            return f"Requirement {target_req_id} is unsupported based on company evidence. Documented limitation: '{limitation}'."
+        elif status == "PARTIALLY_COMPLIANT":
+            limitation = target_notes[:140] if target_notes else (target_ev[:140] if target_ev else "Documented partial capability.")
+            return f"Requirement {target_req_id} is partially supported. Documented limitation or workaround: '{limitation}'."
+        elif status == "INFORMATION_REQUIRED":
+            return f"Verification data is currently missing from company collateral for {target_req_id}: '{target_req_text[:140]}'. Capability status could not be verified from available evidence."
+        else:
+            return f"Clause {target_req_id} contains significant contractual obligations or risk exposure: '{target_req_text[:140]}'."
+
+    return text
+
+
 def _determine_clarification_type(status: str, req_text: str, q_text: str = "") -> str:
     """
     Determines whether a clarification is an ISSUER_CLARIFICATION or an INTERNAL_INFORMATION_REQUEST:
@@ -334,8 +395,9 @@ def _apply_programmatic_safety_guard(
     1. Validates requirement IDs against real requirements. Rejects hallucinated requirement references.
     2. Enforces severity calibration based on compliance status and mandatory/optional flag.
     3. Sanitizes unsupported negative assertions on INFORMATION_REQUIRED items.
-    4. Deduplicates risks and clarifications per requirement.
-    5. Populates complete source traceability metadata.
+    4. Eliminates cross-requirement evidence contamination.
+    5. Deduplicates risks and clarifications per requirement.
+    6. Populates complete source traceability metadata strictly isolated to the originating requirement.
     """
     valid_req_ids = set(req_map.keys())
     validated_risks: List[RiskItem] = []
@@ -355,7 +417,7 @@ def _apply_programmatic_safety_guard(
                 continue  # Reject hallucinated requirement reference
 
         req_info = req_map.get(req_id) if req_id else None
-        comp_info = comp_map.get(req_id) if req_id else None
+        comp_info = comp_map.get(req_id) if req_id else {}
 
         # Prevent duplicates for the same requirement
         if req_id:
@@ -367,6 +429,7 @@ def _apply_programmatic_safety_guard(
         status = comp_info.get("status") if comp_info else "INFORMATION_REQUIRED"
         is_mandatory = req_info.get("is_mandatory", False) if req_info else False
         category = req_info.get("category", risk.category or "Operational") if req_info else (risk.category or "Operational")
+        req_text = req_info.get("text", "") if req_info else (risk.requirement_text or risk.description)
 
         # Calibrate severity
         severity = _calibrate_risk_severity(
@@ -374,36 +437,53 @@ def _apply_programmatic_safety_guard(
             status=status,
             is_mandatory=is_mandatory,
             category=category,
-            req_text=req_info.get("text", "") if req_info else risk.description
+            req_text=req_text
+        )
+
+        # Sanitize cross-requirement evidence contamination
+        description = risk.description or ""
+        description = _sanitize_cross_requirement_evidence(
+            text=description,
+            target_req_id=req_id or "",
+            target_req_text=req_text,
+            target_comp=comp_info,
+            comp_map=comp_map,
+            req_map=req_map
         )
 
         # Sanitize ungrounded claims on INFORMATION_REQUIRED items
-        description = risk.description
         if status == "INFORMATION_REQUIRED":
             description = _sanitize_unverified_claim(description, req_id or "requirement")
 
+        # Citations and source doc strictly isolated to originating requirement
+        citations = comp_info.get("citations", []) if (comp_info and status != "INFORMATION_REQUIRED") else []
+        company_doc_id = comp_info.get("company_doc_id") if (comp_info and status != "INFORMATION_REQUIRED") else None
+        chunk_id = comp_info.get("chunk_id") if (comp_info and status != "INFORMATION_REQUIRED") else None
+
         risk_id = risk.risk_id or f"RISK-{req_id or idx + 1}"
+        rfp_ref = risk.rfp_reference or (f"{req_id} (p. {req_info.get('source_page', 1)}, § {req_info.get('source_section', 'General')})" if req_info else (f"Ref: {req_id}" if req_id else "General"))
+
         validated_risks.append(
             RiskItem(
                 risk_id=risk_id,
                 id=risk.id or risk_id,
                 requirement_id=req_id,
-                requirement_text=req_info.get("text") if req_info else risk.requirement_text,
+                requirement_text=req_text,
                 category=category,
                 severity=severity,
                 likelihood=risk.likelihood or "Medium",
                 title=risk.title or f"{severity} Risk: {category} ({req_id or 'General'})",
                 description=description,
-                impact=risk.impact or "Potential proposal compliance impact or disqualification risk.",
+                impact=risk.impact or ("Risk of proposal disqualification or compliance penalty." if is_mandatory else "Potential proposal scoring deduction."),
                 mitigation_strategy=risk.mitigation_strategy or risk.recommended_action or "Seek formal clarification or internal verification.",
                 recommended_action=risk.recommended_action or risk.mitigation_strategy,
                 compliance_status=status,
-                rfp_reference=risk.rfp_reference or (f"{req_id} (p. {req_info.get('source_page', 1)}, § {req_info.get('source_section', 'General')})" if req_info else None),
-                company_doc_id=comp_info.get("company_doc_id") if comp_info else None,
-                chunk_id=comp_info.get("chunk_id") if comp_info else None,
+                rfp_reference=rfp_ref,
+                company_doc_id=company_doc_id,
+                chunk_id=chunk_id,
                 source_page=req_info.get("source_page") if req_info else None,
                 source_section=req_info.get("source_section") if req_info else None,
-                citations=comp_info.get("citations", []) if comp_info else []
+                citations=citations
             )
         )
 
@@ -423,13 +503,32 @@ def _apply_programmatic_safety_guard(
             seen_clarif_reqs.add(req_id)
 
         req_info = req_map.get(req_id) if req_id else None
-        comp_info = comp_map.get(req_id) if req_id else None
+        comp_info = comp_map.get(req_id) if req_id else {}
         status = comp_info.get("status") if comp_info else "INFORMATION_REQUIRED"
         is_mandatory = req_info.get("is_mandatory", False) if req_info else False
+        req_text = req_info.get("text", "") if req_info else ""
 
-        # Sanitize question text and rationale
+        # Sanitize question text and rationale against cross-requirement evidence
         q_text = clarif.question_text or clarif.question or ""
         q_rationale = clarif.rationale or clarif.reason or ""
+
+        q_text = _sanitize_cross_requirement_evidence(
+            text=q_text,
+            target_req_id=req_id or "",
+            target_req_text=req_text,
+            target_comp=comp_info,
+            comp_map=comp_map,
+            req_map=req_map
+        )
+        q_rationale = _sanitize_cross_requirement_evidence(
+            text=q_rationale,
+            target_req_id=req_id or "",
+            target_req_text=req_text,
+            target_comp=comp_info,
+            comp_map=comp_map,
+            req_map=req_map
+        )
+
         if status == "INFORMATION_REQUIRED":
             q_text = _sanitize_unverified_claim(q_text, req_id or "requirement")
             q_rationale = _sanitize_unverified_claim(q_rationale, req_id or "requirement")
@@ -444,13 +543,15 @@ def _apply_programmatic_safety_guard(
         else:
             clarif_type = _determine_clarification_type(
                 status=status,
-                req_text=req_info.get("text", "") if req_info else "",
+                req_text=req_text,
                 q_text=q_text
             )
 
         # Reconcile target owner strictly using canonical category
         category = req_info.get("category") if req_info else "General"
         target_owner = _determine_target_owner(category, status, clarif_type)
+
+        clarif_citations = comp_info.get("citations", []) if (comp_info and status != "INFORMATION_REQUIRED") else []
 
         validated_clarifs.append(
             ClarificationQuestion(
@@ -467,7 +568,7 @@ def _apply_programmatic_safety_guard(
                 clarification_type=clarif_type,
                 target_owner=target_owner,
                 compliance_status=status,
-                citations=comp_info.get("citations", []) if comp_info else []
+                citations=clarif_citations
             )
         )
         q_counter += 1

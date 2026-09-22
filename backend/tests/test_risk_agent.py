@@ -961,3 +961,380 @@ def test_information_required_generates_clarification_questions_regardless_of_se
     assert clarifs[0]["clarification_type"] == "INTERNAL_INFORMATION_REQUEST"
 
 
+# ==============================================================================
+# EVIDENCE-MAPPING & CROSS-REQUIREMENT ISOLATION REGRESSION TESTS
+# ==============================================================================
+
+def test_iso_vs_audit_log_evidence_isolation():
+    """
+    REGRESSION TEST 1:
+    Verifies that a non-compliant certification requirement (e.g. ISO 27001) NEVER attaches
+    evidence from another security requirement (e.g. immutable audit log records) even when
+    both requirements coexist in the same RFP state.
+    """
+    state: RFPProposalState = {
+        "requirements": [
+            {
+                "req_code": "REQ-CERT-ISO",
+                "text": "The bidder must hold active ISO 27001 Information Security Management certification.",
+                "category": "Certification",
+                "is_mandatory": True,
+                "source_page": 3,
+                "source_section": "Compliance"
+            },
+            {
+                "req_code": "REQ-SEC-LOG",
+                "text": "The platform must maintain immutable audit logs for all security and administrative actions.",
+                "category": "Security",
+                "is_mandatory": True,
+                "source_page": 4,
+                "source_section": "Security Controls"
+            }
+        ],
+        "compliance_matrix": [
+            {
+                "req_code": "REQ-CERT-ISO",
+                "status": "NON_COMPLIANT",
+                "confidence": 0.95,
+                "evidence_text": "Formal ISO/IEC 27001 certification is not currently held and requires separate qualification.",
+                "company_source_doc": "Demo_Company_Security_Governance.txt",
+                "company_doc_id": "doc_sec_01",
+                "chunk_id": "chunk_iso_unsupp",
+                "notes": "ISO 27001 is out of scope and unsupported.",
+                "citations": [{"company_doc_id": "doc_sec_01", "snippet": "Formal ISO/IEC 27001 certification is not currently held."}]
+            },
+            {
+                "req_code": "REQ-SEC-LOG",
+                "status": "COMPLIANT",
+                "confidence": 0.98,
+                "evidence_text": "All user actions and security events generate immutable audit log records stored with cryptographic HMAC signatures.",
+                "company_source_doc": "Demo_Company_Security_Governance.txt",
+                "company_doc_id": "doc_sec_01",
+                "chunk_id": "chunk_audit_log",
+                "notes": "Immutable audit logging fully supported.",
+                "citations": [{"company_doc_id": "doc_sec_01", "snippet": "immutable audit log records stored with cryptographic HMAC signatures"}]
+            }
+        ]
+    }
+
+    result = assess_risks_node(state)
+    risks = result["risks"]
+    clarifs = result["clarification_questions"]
+
+    # Filter risk for ISO requirement
+    iso_risks = [r for r in risks if r.get("requirement_id") == "REQ-CERT-ISO"]
+    assert len(iso_risks) == 1, "Expected exactly 1 risk for REQ-CERT-ISO"
+    iso_risk = iso_risks[0]
+
+    # ISO risk must be CRITICAL (mandatory non-compliant certification)
+    assert iso_risk["severity"] == "CRITICAL"
+    assert iso_risk["requirement_id"] == "REQ-CERT-ISO"
+
+    # CRITICAL: Description MUST NOT contain audit log evidence
+    assert "audit log" not in iso_risk["description"].lower()
+    assert "hmac" not in iso_risk["description"].lower()
+    assert "immutable" not in iso_risk["description"].lower()
+
+    # ISO risk must reference ISO limitation
+    assert "iso" in iso_risk["description"].lower() or "unsupported" in iso_risk["description"].lower()
+
+    # Citations must only contain ISO chunk
+    assert iso_risk["chunk_id"] == "chunk_iso_unsupp"
+
+
+def test_unrelated_requirements_evidence_isolation():
+    """
+    REGRESSION TEST 2:
+    Verifies that multiple distinct requirements (API, Mainframe, SLA) retain strict
+    evidence boundaries with zero cross-contamination.
+    """
+    state: RFPProposalState = {
+        "requirements": [
+            {
+                "req_code": "REQ-TECH-API",
+                "text": "The platform must provide REST API integration for third-party billing systems.",
+                "category": "Technical",
+                "is_mandatory": True,
+                "source_page": 5,
+                "source_section": "Integration"
+            },
+            {
+                "req_code": "REQ-ARCH-MAINFRAME",
+                "text": "The platform must provide native IBM mainframe 3270 terminal emulation.",
+                "category": "Architecture",
+                "is_mandatory": True,
+                "source_page": 6,
+                "source_section": "Legacy Support"
+            },
+            {
+                "req_code": "REQ-LEG-SLA",
+                "text": "Vendor shall pay liquidated damages of $10,000 per hour of downtime.",
+                "category": "Legal",
+                "is_mandatory": True,
+                "source_page": 7,
+                "source_section": "Commercial Penalties"
+            }
+        ],
+        "compliance_matrix": [
+            {
+                "req_code": "REQ-TECH-API",
+                "status": "COMPLIANT",
+                "confidence": 0.96,
+                "evidence_text": "REST API provides robust JSON endpoints and webhook notifications for third-party billing systems.",
+                "company_source_doc": "Demo_Company_Technical_Capabilities.txt",
+                "notes": "Full REST API support."
+            },
+            {
+                "req_code": "REQ-ARCH-MAINFRAME",
+                "status": "NON_COMPLIANT",
+                "confidence": 0.99,
+                "evidence_text": "Mainframe 3270 terminal emulation is strictly unsupported in our cloud architecture.",
+                "company_source_doc": "Demo_Company_Architecture.txt",
+                "notes": "Mainframe unsupported."
+            },
+            {
+                "req_code": "REQ-LEG-SLA",
+                "status": "INFORMATION_REQUIRED",
+                "confidence": 0.0,
+                "evidence_text": None,
+                "notes": "Uncapped hourly liquidated damages clause requires legal risk assessment."
+            }
+        ]
+    }
+
+    result = assess_risks_node(state)
+    risks = result["risks"]
+
+    mainframe_risks = [r for r in risks if r.get("requirement_id") == "REQ-ARCH-MAINFRAME"]
+    assert len(mainframe_risks) == 1
+    mf_risk = mainframe_risks[0]
+    assert "rest api" not in mf_risk["description"].lower()
+    assert "billing" not in mf_risk["description"].lower()
+    assert "liquidated damages" not in mf_risk["description"].lower()
+
+    sla_risks = [r for r in risks if r.get("requirement_id") == "REQ-LEG-SLA"]
+    assert len(sla_risks) == 1
+    sla_risk = sla_risks[0]
+    assert "rest api" not in sla_risk["description"].lower()
+    assert "mainframe" not in sla_risk["description"].lower()
+
+
+def test_no_evidence_borrowing_on_information_required():
+    """
+    REGRESSION TEST 3:
+    Verifies that an INFORMATION_REQUIRED requirement never borrows high-scoring
+    evidence chunks from other requirements and has empty citations.
+    """
+    state: RFPProposalState = {
+        "requirements": [
+            {
+                "req_code": "REQ-WEB-01",
+                "text": "Web-based responsive UI accessible via standard browsers.",
+                "category": "Technical",
+                "is_mandatory": True,
+                "source_page": 2,
+                "source_section": "Frontend"
+            },
+            {
+                "req_code": "REQ-PROPRIETARY-02",
+                "text": "Integration with custom proprietary legacy AS400 warehouse protocol.",
+                "category": "Technical",
+                "is_mandatory": True,
+                "source_page": 8,
+                "source_section": "Warehousing"
+            }
+        ],
+        "compliance_matrix": [
+            {
+                "req_code": "REQ-WEB-01",
+                "status": "COMPLIANT",
+                "confidence": 0.99,
+                "evidence_text": "The web application provides a responsive HTML5 SPA accessible on Chrome, Firefox and Edge.",
+                "company_source_doc": "Demo_Company_Platform.txt",
+                "company_doc_id": "doc_plat_01",
+                "chunk_id": "chunk_web_ui",
+                "citations": [{"company_doc_id": "doc_plat_01", "snippet": "responsive HTML5 SPA"}]
+            },
+            {
+                "req_code": "REQ-PROPRIETARY-02",
+                "status": "INFORMATION_REQUIRED",
+                "confidence": 0.0,
+                "evidence_text": None,
+                "company_source_doc": None,
+                "company_doc_id": None,
+                "chunk_id": None,
+                "citations": [],
+                "notes": "No proprietary AS400 connector in knowledge base."
+            }
+        ]
+    }
+
+    result = assess_risks_node(state)
+    risks = result["risks"]
+    clarifs = result["clarification_questions"]
+
+    prop_risks = [r for r in risks if r.get("requirement_id") == "REQ-PROPRIETARY-02"]
+    assert len(prop_risks) == 1
+    p_risk = prop_risks[0]
+
+    # Must NOT borrow web UI evidence
+    assert "html5" not in p_risk["description"].lower()
+    assert "chrome" not in p_risk["description"].lower()
+    assert "responsive" not in p_risk["description"].lower()
+
+    # Must state missing verification
+    assert "could not be verified" in p_risk["description"].lower() or "missing" in p_risk["description"].lower()
+    assert p_risk["citations"] == []
+    assert p_risk["company_doc_id"] is None
+    assert p_risk["chunk_id"] is None
+
+
+def test_calibrated_severity_preservation_under_multi_item_state():
+    """
+    REGRESSION TEST 4:
+    Verifies that all enterprise severity calibration tiers (CRITICAL, HIGH, MEDIUM, LOW)
+    are strictly preserved in a comprehensive multi-item RFP state.
+    """
+    state: RFPProposalState = {
+        "requirements": [
+            {
+                "req_code": "REQ-1-DISQ",
+                "text": "Failure to provide valid FIPS 140-2 cryptography shall be grounds for immediate bid disqualification.",
+                "category": "Security",
+                "is_mandatory": True
+            },
+            {
+                "req_code": "REQ-2-NONCOMP-CERT",
+                "text": "Vendor must hold ISO 27001 certification.",
+                "category": "Certification",
+                "is_mandatory": True
+            },
+            {
+                "req_code": "REQ-3-INFO-CERT",
+                "text": "Vendor must hold SOC 2 Type II certification.",
+                "category": "Certification",
+                "is_mandatory": True
+            },
+            {
+                "req_code": "REQ-4-INFO-SLA",
+                "text": "Monthly uptime availability shall be at least 99.9% with strict SLA penalties.",
+                "category": "Technical",
+                "is_mandatory": True
+            },
+            {
+                "req_code": "REQ-5-INFO-PBG",
+                "text": "A performance bank guarantee of 10% contract value is required.",
+                "category": "Contractual",
+                "is_mandatory": True
+            },
+            {
+                "req_code": "REQ-6-INFO-TECH",
+                "text": "The web application shall provide an intuitive dashboard.",
+                "category": "Technical",
+                "is_mandatory": True
+            },
+            {
+                "req_code": "REQ-7-INFO-OPT",
+                "text": "Optional dark mode theme for user interface.",
+                "category": "Technical",
+                "is_mandatory": False
+            }
+        ],
+        "compliance_matrix": [
+            {"req_code": "REQ-1-DISQ", "status": "INFORMATION_REQUIRED", "evidence_text": None},
+            {"req_code": "REQ-2-NONCOMP-CERT", "status": "NON_COMPLIANT", "evidence_text": "ISO 27001 unsupported."},
+            {"req_code": "REQ-3-INFO-CERT", "status": "INFORMATION_REQUIRED", "evidence_text": None},
+            {"req_code": "REQ-4-INFO-SLA", "status": "INFORMATION_REQUIRED", "evidence_text": None},
+            {"req_code": "REQ-5-INFO-PBG", "status": "INFORMATION_REQUIRED", "evidence_text": None},
+            {"req_code": "REQ-6-INFO-TECH", "status": "INFORMATION_REQUIRED", "evidence_text": None},
+            {"req_code": "REQ-7-INFO-OPT", "status": "INFORMATION_REQUIRED", "evidence_text": None}
+        ]
+    }
+
+    result = assess_risks_node(state)
+    risk_map = {r["requirement_id"]: r["severity"] for r in result["risks"]}
+
+    assert risk_map["REQ-1-DISQ"] == "CRITICAL", "Disqualification clause must be CRITICAL"
+    assert risk_map["REQ-2-NONCOMP-CERT"] == "CRITICAL", "Mandatory non-compliant certification must be CRITICAL"
+    assert risk_map["REQ-3-INFO-CERT"] == "HIGH", "Mandatory unverified certification must be HIGH"
+    assert risk_map["REQ-4-INFO-SLA"] == "HIGH", "Mandatory strict SLA must be HIGH"
+    assert risk_map["REQ-5-INFO-PBG"] == "HIGH", "Mandatory PBG must be HIGH"
+    assert risk_map["REQ-6-INFO-TECH"] in ["LOW", "MEDIUM"], "Ordinary technical requirement must be LOW or MEDIUM"
+    assert risk_map["REQ-7-INFO-OPT"] in ["LOW", "MEDIUM"], "Optional requirement gap must be LOW or MEDIUM"
+
+
+def test_programmatic_safety_guard_strips_foreign_evidence_borrowing():
+    """
+    REGRESSION TEST 5:
+    Simulates an LLM hallucination where foreign evidence text ('immutable audit log records stored with cryptographic HMAC signatures')
+    was incorrectly attached by the LLM to an ISO certification risk.
+    Asserts that _apply_programmatic_safety_guard detects and strips foreign evidence.
+    """
+    req_map = {
+        "REQ-ISO-01": {
+            "req_code": "REQ-ISO-01",
+            "text": "Bidder must possess ISO 27001 Information Security certification.",
+            "category": "Certification",
+            "is_mandatory": True,
+            "source_page": 2,
+            "source_section": "Security"
+        },
+        "REQ-AUDIT-02": {
+            "req_code": "REQ-AUDIT-02",
+            "text": "Platform must maintain immutable audit logging records.",
+            "category": "Security",
+            "is_mandatory": True,
+            "source_page": 3,
+            "source_section": "Audit"
+        }
+    }
+
+    comp_map = {
+        "REQ-ISO-01": {
+            "req_code": "REQ-ISO-01",
+            "status": "NON_COMPLIANT",
+            "evidence_text": "We do not currently hold ISO 27001 certification.",
+            "notes": "ISO 27001 unsupported in current collateral.",
+            "citations": [{"company_doc_id": "doc1", "snippet": "We do not currently hold ISO 27001 certification."}]
+        },
+        "REQ-AUDIT-02": {
+            "req_code": "REQ-AUDIT-02",
+            "status": "COMPLIANT",
+            "evidence_text": "All user actions and security events generate immutable audit log records stored with cryptographic HMAC signatures.",
+            "notes": "Audit logging supported.",
+            "citations": [{"company_doc_id": "doc2", "snippet": "immutable audit log records"}]
+        }
+    }
+
+    # Simulate contaminated LLM output
+    contaminated_llm_output = RiskAndClarificationOutput(
+        risks=[
+            RiskItem(
+                category="Certification",
+                severity="CRITICAL",
+                likelihood="High",
+                requirement_id="REQ-ISO-01",
+                # Contaminated description containing audit log evidence:
+                description="Requirement REQ-ISO-01 is unsupported. Evidence found: All user actions and security events generate immutable audit log records stored with cryptographic HMAC signatures.",
+                mitigation_strategy="Seek exception."
+            )
+        ],
+        clarification_questions=[]
+    )
+
+    validated_risks, _ = _apply_programmatic_safety_guard(
+        llm_output=contaminated_llm_output,
+        req_map=req_map,
+        comp_map=comp_map
+    )
+
+    assert len(validated_risks) == 1
+    v_risk = validated_risks[0]
+    assert v_risk.requirement_id == "REQ-ISO-01"
+
+    # Must have detected contamination and stripped audit log snippet
+    assert "immutable audit log" not in v_risk.description.lower()
+    assert "hmac" not in v_risk.description.lower()
+
+    # Must contain target ISO limitation
+    assert "iso" in v_risk.description.lower() or "unsupported" in v_risk.description.lower()

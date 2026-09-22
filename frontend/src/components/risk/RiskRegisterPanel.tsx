@@ -97,7 +97,12 @@ export const RiskRegisterPanel: React.FC<Props> = ({ risks, clarifications, rfpT
               ) : (
                 risks.map((r) => (
                   <tr key={r.id} className="hover:bg-slate-50/60 transition">
-                    <td className="py-3 px-4 font-semibold text-slate-800">{r.category}</td>
+                    <td className="py-3 px-4 font-semibold text-slate-800">
+                      <div>{r.category}</div>
+                      {r.requirement_id && (
+                        <div className="text-[10px] font-mono text-slate-400 font-normal">{r.requirement_id}</div>
+                      )}
+                    </td>
                     <td className="py-3 px-4 whitespace-nowrap">
                       <span
                         className={`px-2 py-0.5 rounded text-[10px] font-bold ${

@@ -242,7 +242,8 @@ def get_risks_and_clarifications(rfp_id: str, db: Session = Depends(get_db)):
                 "likelihood": r.likelihood,
                 "description": r.description,
                 "mitigation_strategy": r.mitigation_strategy,
-                "rfp_reference": r.rfp_reference
+                "rfp_reference": r.rfp_reference,
+                "requirement_id": getattr(r, "requirement_id", None) or r.rfp_reference
             }
             for r in risks
         ],
@@ -252,7 +253,8 @@ def get_risks_and_clarifications(rfp_id: str, db: Session = Depends(get_db)):
                 "q_number": q.q_number,
                 "rfp_section_reference": q.rfp_section_reference,
                 "question_text": q.question_text,
-                "rationale": q.rationale
+                "rationale": q.rationale,
+                "requirement_id": getattr(q, "requirement_id", None)
             }
             for q in questions
         ]

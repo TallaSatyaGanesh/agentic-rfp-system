@@ -71,6 +71,7 @@ class RiskRecord(Base):
 
     id = Column(String(50), primary_key=True, index=True)
     rfp_id = Column(String(50), ForeignKey("rfp_documents.id"), nullable=False)
+    requirement_id = Column(String(50), nullable=True)
     category = Column(String(50), default="Operational")  # Technical, Operational, Financial, Legal, Timeline
     severity = Column(String(20), default="Medium")  # High, Medium, Low
     likelihood = Column(String(20), default="Medium")  # High, Medium, Low
@@ -85,6 +86,7 @@ class ClarificationQuestion(Base):
 
     id = Column(String(50), primary_key=True, index=True)
     rfp_id = Column(String(50), ForeignKey("rfp_documents.id"), nullable=False)
+    requirement_id = Column(String(50), nullable=True)
     q_number = Column(Integer, default=1)
     rfp_section_reference = Column(String(255), default="General")
     question_text = Column(Text, nullable=False)

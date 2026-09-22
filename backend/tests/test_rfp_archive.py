@@ -9,8 +9,21 @@ from app.db.models import RFPDocument
 
 
 def test_schema_migration_idempotent():
-    """Verifies that ensure_schema_migrations executes idempotently without error."""
+    """Verifies that ensure_schema_migrations executes idempotently and covers all incremental columns."""
+    from sqlalchemy import text
     ensure_schema_migrations(engine)
+    ensure_schema_migrations(engine)  # Run twice to guarantee idempotency
+
+    with engine.begin() as conn:
+        url_str = str(engine.url).lower()
+        if "sqlite" in url_str:
+            res_risk = conn.execute(text("PRAGMA table_info(risk_records);")).fetchall()
+            risk_cols = [r[1] for r in res_risk]
+            assert "requirement_id" in risk_cols, "risk_records.requirement_id must exist after migration"
+
+            res_clarif = conn.execute(text("PRAGMA table_info(clarification_questions);")).fetchall()
+            clarif_cols = [r[1] for r in res_clarif]
+            assert "requirement_id" in clarif_cols, "clarification_questions.requirement_id must exist after migration"
 
 
 def test_archive_stale_rfp_lifecycle():

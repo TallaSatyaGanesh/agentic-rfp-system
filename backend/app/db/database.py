@@ -46,14 +46,28 @@ def ensure_schema_migrations(bind_engine):
     url_str = str(bind_engine.url).lower()
     with bind_engine.begin() as conn:
         if "sqlite" in url_str:
-            # Check if archived_at column exists in rfp_documents
-            res = conn.execute(text("PRAGMA table_info(rfp_documents);")).fetchall()
-            col_names = [r[1] for r in res] if res else []
-            if col_names and "archived_at" not in col_names:
+            # 1. rfp_documents.archived_at
+            res_rfp = conn.execute(text("PRAGMA table_info(rfp_documents);")).fetchall()
+            rfp_cols = [r[1] for r in res_rfp] if res_rfp else []
+            if rfp_cols and "archived_at" not in rfp_cols:
                 conn.execute(text("ALTER TABLE rfp_documents ADD COLUMN archived_at DATETIME;"))
+
+            # 2. risk_records.requirement_id
+            res_risk = conn.execute(text("PRAGMA table_info(risk_records);")).fetchall()
+            risk_cols = [r[1] for r in res_risk] if res_risk else []
+            if risk_cols and "requirement_id" not in risk_cols:
+                conn.execute(text("ALTER TABLE risk_records ADD COLUMN requirement_id VARCHAR(50);"))
+
+            # 3. clarification_questions.requirement_id
+            res_clarif = conn.execute(text("PRAGMA table_info(clarification_questions);")).fetchall()
+            clarif_cols = [r[1] for r in res_clarif] if res_clarif else []
+            if clarif_cols and "requirement_id" not in clarif_cols:
+                conn.execute(text("ALTER TABLE clarification_questions ADD COLUMN requirement_id VARCHAR(50);"))
         else:
             # PostgreSQL / Supabase
             conn.execute(text("ALTER TABLE rfp_documents ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP WITH TIME ZONE;"))
+            conn.execute(text("ALTER TABLE risk_records ADD COLUMN IF NOT EXISTS requirement_id VARCHAR(50);"))
+            conn.execute(text("ALTER TABLE clarification_questions ADD COLUMN IF NOT EXISTS requirement_id VARCHAR(50);"))
 
 
 def get_db():

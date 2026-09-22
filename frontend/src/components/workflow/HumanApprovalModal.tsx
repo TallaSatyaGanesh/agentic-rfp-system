@@ -282,7 +282,7 @@ export const HumanApprovalModal: React.FC<Props> = ({
                       <ul className="list-disc list-inside space-y-1">
                         {criticalRisks.slice(0, 3).map((cr, idx) => (
                           <li key={idx} className="line-clamp-2">
-                            <strong>{cr.category}:</strong> {cr.description}
+                            <strong>{cr.requirement_id ? `[${cr.requirement_id}] ${cr.category}:` : `${cr.category}:`}</strong> {cr.description}
                           </li>
                         ))}
                       </ul>

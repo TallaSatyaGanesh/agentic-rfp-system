@@ -97,25 +97,29 @@ def _persist_workflow_results_to_db(rfp_id: str, final_state: Dict[str, Any]):
         # Save Risks
         for r_idx, r_item in enumerate(final_state.get("risks") or []):
             risk_id = f"{rfp_id}_risk_{r_idx}"
+            req_id_val = r_item.get("requirement_id") or r_item.get("rfp_reference")
             if not db.query(RiskRecord).filter(RiskRecord.id == risk_id).first():
                 db.add(RiskRecord(
                     id=risk_id,
                     rfp_id=rfp_id,
+                    requirement_id=req_id_val,
                     category=r_item.get("category", "Operational"),
                     severity=r_item.get("severity", "Medium"),
                     likelihood=r_item.get("likelihood", "Medium"),
                     description=r_item.get("description", ""),
                     mitigation_strategy=r_item.get("mitigation_strategy", ""),
-                    rfp_reference=r_item.get("rfp_reference")
+                    rfp_reference=r_item.get("rfp_reference") or (f"Ref: {req_id_val}" if req_id_val else None)
                 ))
 
         # Save Clarifications
         for q_item in final_state.get("clarification_questions") or []:
             q_id = f"{rfp_id}_q_{q_item.get('q_number', 1)}"
+            q_req_id = q_item.get("requirement_id")
             if not db.query(ClarificationQuestion).filter(ClarificationQuestion.id == q_id).first():
                 db.add(ClarificationQuestion(
                     id=q_id,
                     rfp_id=rfp_id,
+                    requirement_id=q_req_id,
                     q_number=q_item.get("q_number", 1),
                     rfp_section_reference=q_item.get("rfp_section_reference", "General"),
                     question_text=q_item.get("question_text", ""),
@@ -366,6 +370,7 @@ def _reconstruct_state_from_db(
             "description": r.description,
             "mitigation_strategy": r.mitigation_strategy,
             "rfp_reference": r.rfp_reference,
+            "requirement_id": getattr(r, "requirement_id", None) or r.rfp_reference,
         }
         for r in risk_records
     ]
@@ -378,6 +383,7 @@ def _reconstruct_state_from_db(
             "rfp_section_reference": q.rfp_section_reference,
             "question_text": q.question_text,
             "rationale": q.rationale,
+            "requirement_id": getattr(q, "requirement_id", None),
         }
         for q in q_records
     ]
