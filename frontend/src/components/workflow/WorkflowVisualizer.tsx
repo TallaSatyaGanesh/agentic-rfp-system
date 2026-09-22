@@ -375,7 +375,9 @@ export const WorkflowVisualizer: React.FC<Props> = ({
               <div>
                 <h4 className="text-sm font-bold text-rose-900">Mandatory Human Escalation Required</h4>
                 <p className="text-xs text-rose-700 mt-0.5">
-                  The Reviewer Agent detected unresolved critical findings or the maximum automated revision limit (2/2) has been reached. A human proposal manager must evaluate the proposal to approve, request changes, or reject.
+                  {revisionCount >= 2
+                    ? `Maximum automated revision limit reached (Cycle ${revisionCount}/2). A human proposal manager must evaluate the proposal to approve, request changes, or reject.`
+                    : 'Executive sign-off required for proposal release (Tender risk or revision escalation). A human proposal manager must evaluate the proposal.'}
                 </p>
               </div>
             </div>
