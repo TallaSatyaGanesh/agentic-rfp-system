@@ -85,27 +85,31 @@ export class WorkflowEventSource {
       this.eventSource.onerror = (err) => {
         if (this.isExplicitlyClosed) return;
 
-        if (this.eventSource?.readyState === EventSource.CLOSED) {
-          if (this.retryCount < this.maxRetries) {
-            this.retryCount += 1;
-            this.onConnectionChange?.('reconnecting');
-            const delay = Math.min(1000 * Math.pow(1.5, this.retryCount), 8000);
-            this.reconnectTimer = window.setTimeout(() => {
-              if (!this.isExplicitlyClosed) {
-                this.connect();
-              }
-            }, delay);
-          } else {
-            this.onConnectionChange?.('disconnected');
-            this.close();
-          }
+        this.retryCount += 1;
+        // Fast backoff for initial attempts (1s - 6s), then steady 10s background interval
+        const delay = this.retryCount <= 5
+          ? Math.min(1000 * Math.pow(1.5, this.retryCount), 6000)
+          : 10000;
+
+        if (this.retryCount > 5) {
+          this.onConnectionChange?.('disconnected');
         } else {
           this.onConnectionChange?.('reconnecting');
         }
+
+        if (this.reconnectTimer !== null) {
+          window.clearTimeout(this.reconnectTimer);
+        }
+
+        this.reconnectTimer = window.setTimeout(() => {
+          if (!this.isExplicitlyClosed) {
+            this.connect();
+          }
+        }, delay);
       };
     } catch (err) {
       console.error('[SSE Connection Error]', err);
-      this.onConnectionChange?.('failed');
+      this.onConnectionChange?.('disconnected');
     }
   }
 

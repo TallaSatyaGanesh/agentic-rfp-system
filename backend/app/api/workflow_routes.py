@@ -1,7 +1,7 @@
 import asyncio
 import json
 from typing import Dict, Any, Optional, Tuple, List
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.orm import Session
@@ -28,10 +28,45 @@ async def broadcast_event(rfp_id: str, event_type: str, data: Dict[str, Any]):
     payload = {
         "event": event_type,
         "rfp_id": rfp_id,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "data": data
     }
     await q.put(payload)
+
+def broadcast_event_threadsafe(
+    rfp_id: str,
+    event_type: str,
+    data: Dict[str, Any],
+    loop: Optional[asyncio.AbstractEventLoop] = None
+):
+    """
+    Thread-safe event dispatcher that schedules SSE payloads onto the main asyncio queue
+    from worker execution threads without blocking the event loop.
+    """
+    payload = {
+        "event": event_type,
+        "rfp_id": rfp_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "data": data
+    }
+
+    def _enqueue():
+        q = get_event_queue(rfp_id)
+        q.put_nowait(payload)
+
+    if loop and loop.is_running():
+        loop.call_soon_threadsafe(_enqueue)
+    else:
+        try:
+            cur_loop = asyncio.get_running_loop()
+            if cur_loop.is_running():
+                cur_loop.call_soon_threadsafe(_enqueue)
+            else:
+                q = get_event_queue(rfp_id)
+                q.put_nowait(payload)
+        except RuntimeError:
+            q = get_event_queue(rfp_id)
+            q.put_nowait(payload)
 
 def _persist_workflow_results_to_db(rfp_id: str, final_state: Dict[str, Any]):
     """Synchronizes LangGraph state to SQLite relational tables."""
@@ -166,8 +201,12 @@ def _persist_workflow_results_to_db(rfp_id: str, final_state: Dict[str, Any]):
     finally:
         db.close()
 
-async def run_workflow_async(rfp_id: str, file_path: str):
-    """Executes the LangGraph workflow and streams events."""
+def run_workflow_sync(rfp_id: str, file_path: str, loop: Optional[asyncio.AbstractEventLoop] = None):
+    """
+    Executes the LangGraph workflow synchronously inside a background worker thread.
+    Preserves full state, checkpoints, human approval gates, revision cycles, and database sync
+    while keeping the FastAPI asyncio event loop completely non-blocking and responsive.
+    """
     config = {"configurable": {"thread_id": rfp_id}}
     
     initial_state: RFPProposalState = {
@@ -186,7 +225,7 @@ async def run_workflow_async(rfp_id: str, file_path: str):
         "current_version": 0,
         "review_reports": [],
         "revision_count": 0,
-        "max_revisions": 2,
+        "max_revisions": getattr(settings, "MAX_REVISION_CYCLES", 2),
         "final_approval_decision": None,
         "human_feedback": None,
         "active_agent": "Extraction Agent",
@@ -195,11 +234,11 @@ async def run_workflow_async(rfp_id: str, file_path: str):
         "error": None
     }
 
-    await broadcast_event(rfp_id, "status_change", {
+    broadcast_event_threadsafe(rfp_id, "status_change", {
         "active_agent": "Extraction Agent",
         "status": "EXTRACTING",
         "message": "Initiating document extraction and layout analysis..."
-    })
+    }, loop=loop)
 
     try:
         for output in rfp_graph.stream(initial_state, config, stream_mode="updates"):
@@ -213,7 +252,7 @@ async def run_workflow_async(rfp_id: str, file_path: str):
                 logs = state_update.get("logs", [])
                 latest_log = logs[-1] if logs else None
 
-                await broadcast_event(rfp_id, "node_completed", {
+                broadcast_event_threadsafe(rfp_id, "node_completed", {
                     "node": node_name,
                     "active_agent": active_agent,
                     "status": status,
@@ -223,7 +262,7 @@ async def run_workflow_async(rfp_id: str, file_path: str):
                         "compliance_score": state_update.get("overall_compliance_score"),
                         "current_version": state_update.get("current_version")
                     }
-                })
+                }, loop=loop)
 
         # Check if paused at human gate
         current_state = rfp_graph.get_state(config)
@@ -231,7 +270,7 @@ async def run_workflow_async(rfp_id: str, file_path: str):
         if current_state.next:
             next_node = current_state.next[0]
             if next_node == "human_go_nogo_gate":
-                await broadcast_event(rfp_id, "human_approval_required", {
+                broadcast_event_threadsafe(rfp_id, "human_approval_required", {
                     "gate": "GO_NOGO",
                     "title": "Bid Go / No-Go Decision Gate",
                     "description": "Compliance analysis and risk assessment completed. Please review findings and confirm whether to proceed.",
@@ -241,11 +280,11 @@ async def run_workflow_async(rfp_id: str, file_path: str):
                         "high_risks_count": len([r for r in current_state.values.get("risks", []) if (r.get("severity") or "").upper() == "HIGH"]),
                         "critical_risks_count": len([r for r in current_state.values.get("risks", []) if (r.get("severity") or "").upper() == "CRITICAL"])
                     }
-                })
+                }, loop=loop)
             elif next_node == "human_final_approval_gate":
                 reviews = current_state.values.get("review_reports", [])
                 latest_score = reviews[-1].get("overall_score", 0) if reviews else 0
-                await broadcast_event(rfp_id, "human_approval_required", {
+                broadcast_event_threadsafe(rfp_id, "human_approval_required", {
                     "gate": "FINAL_APPROVAL",
                     "title": "Final Proposal Sign-Off Gate",
                     "description": f"Proposal Draft v{current_state.values.get('current_version', 1)} completed review cycle with score {latest_score}/100. Approve for export or request changes.",
@@ -254,12 +293,12 @@ async def run_workflow_async(rfp_id: str, file_path: str):
                         "version": current_state.values.get("current_version", 1),
                         "draft_title": current_state.values.get("proposal_drafts", [{}])[-1].get("title", "")
                     }
-                })
+                }, loop=loop)
         else:
             # Workflow completed
-            await broadcast_event(rfp_id, "workflow_finished", {
+            broadcast_event_threadsafe(rfp_id, "workflow_finished", {
                 "status": current_state.values.get("workflow_status", "COMPLETED")
-            })
+            }, loop=loop)
 
     except Exception as e:
         print(f"[Workflow Runtime Error] {e}")
@@ -274,7 +313,12 @@ async def run_workflow_async(rfp_id: str, file_path: str):
             db.rollback()
         finally:
             db.close()
-        await broadcast_event(rfp_id, "error", {"error": str(e)})
+        broadcast_event_threadsafe(rfp_id, "error", {"error": str(e)}, loop=loop)
+
+async def run_workflow_async(rfp_id: str, file_path: str):
+    """Asynchronous wrapper for backwards compatibility and async test callers."""
+    loop = asyncio.get_running_loop()
+    await asyncio.to_thread(run_workflow_sync, rfp_id, file_path, loop)
 
 @router.post("/{rfp_id}/start")
 async def start_workflow(
@@ -282,7 +326,7 @@ async def start_workflow(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """Initiates LangGraph multi-agent workflow for an uploaded RFP."""
+    """Initiates LangGraph multi-agent workflow for an uploaded RFP in a background worker thread."""
     rfp = db.query(RFPDocument).filter(RFPDocument.id == rfp_id).first()
     if not rfp:
         raise HTTPException(status_code=404, detail="RFP not found")
@@ -304,7 +348,8 @@ async def start_workflow(
     rfp.status = "PROCESSING"
     db.commit()
 
-    background_tasks.add_task(run_workflow_async, rfp_id, local_file)
+    loop = asyncio.get_running_loop()
+    background_tasks.add_task(run_workflow_sync, rfp_id, local_file, loop)
     return {"message": "Workflow started successfully", "rfp_id": rfp_id}
 
 def _reconstruct_state_from_db(
@@ -572,13 +617,15 @@ async def resume_workflow(
             feedback = payload.get("feedback", "")
             rfp_graph.update_state(config, {"final_approval_decision": decision, "human_feedback": feedback})
 
-    # Continue streaming workflow from resumed checkpoint
-    async def resume_stream():
-        await broadcast_event(rfp_id, "status_change", {
+    def resume_workflow_sync(
+        loop: Optional[asyncio.AbstractEventLoop] = None
+    ):
+        """Executes the resumed LangGraph workflow in a background worker thread."""
+        broadcast_event_threadsafe(rfp_id, "status_change", {
             "active_agent": "System",
             "status": "RESUMING",
             "message": f"Human decision received ({payload.get('decision')}). Resuming workflow..."
-        })
+        }, loop=loop)
         try:
             for output in rfp_graph.stream(None, config, stream_mode="updates"):
                 if not isinstance(output, dict):
@@ -586,12 +633,12 @@ async def resume_workflow(
                 for node_name, state_update in output.items():
                     if node_name == "__interrupt__" or not isinstance(state_update, dict):
                         continue
-                    await broadcast_event(rfp_id, "node_completed", {
+                    broadcast_event_threadsafe(rfp_id, "node_completed", {
                         "node": node_name,
                         "active_agent": state_update.get("active_agent", node_name),
                         "status": state_update.get("workflow_status", "PROCESSING"),
                         "log": (state_update.get("logs") or [None])[-1]
-                    })
+                    }, loop=loop)
 
             current_state = rfp_graph.get_state(config)
             _persist_workflow_results_to_db(rfp_id, current_state.values)
@@ -600,7 +647,7 @@ async def resume_workflow(
                 if next_node == "human_final_approval_gate":
                     reviews = current_state.values.get("review_reports", [])
                     latest_score = reviews[-1].get("overall_score", 0) if reviews else 0
-                    await broadcast_event(rfp_id, "human_approval_required", {
+                    broadcast_event_threadsafe(rfp_id, "human_approval_required", {
                         "gate": "FINAL_APPROVAL",
                         "title": "Final Proposal Sign-Off Gate",
                         "description": f"Proposal Draft v{current_state.values.get('current_version', 1)} completed review cycle with score {latest_score}/100. Approve for export or request changes.",
@@ -609,11 +656,11 @@ async def resume_workflow(
                             "version": current_state.values.get("current_version", 1),
                             "draft_title": current_state.values.get("proposal_drafts", [{}])[-1].get("title", "")
                         }
-                    })
+                    }, loop=loop)
             else:
-                await broadcast_event(rfp_id, "workflow_finished", {
+                broadcast_event_threadsafe(rfp_id, "workflow_finished", {
                     "status": current_state.values.get("workflow_status", "COMPLETED")
-                })
+                }, loop=loop)
         except Exception as e:
             print(f"[Workflow Resume Runtime Error] {e}")
             db_err = SessionLocal()
@@ -627,15 +674,17 @@ async def resume_workflow(
                 db_err.rollback()
             finally:
                 db_err.close()
-            await broadcast_event(rfp_id, "error", {"error": str(e)})
+            broadcast_event_threadsafe(rfp_id, "error", {"error": str(e)}, loop=loop)
 
-    background_tasks.add_task(resume_stream)
+    loop = asyncio.get_running_loop()
+    background_tasks.add_task(resume_workflow_sync, loop)
     return {"message": "Human input accepted. Resuming workflow execution."}
 
 @router.get("/{rfp_id}/stream")
 async def stream_workflow(rfp_id: str):
     """
-    Server-Sent Events (SSE) endpoint providing real-time workflow telemetry.
+    Server-Sent Events (SSE) endpoint providing real-time workflow telemetry
+    with automatic 15-second heartbeat ping comments.
     """
     q = get_event_queue(rfp_id)
 
@@ -649,4 +698,4 @@ async def stream_workflow(rfp_id: str):
             if event["event"] in ["workflow_finished", "error"]:
                 break
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(event_generator(), ping=15)

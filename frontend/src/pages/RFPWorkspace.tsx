@@ -189,7 +189,7 @@ export const RFPWorkspace: React.FC<Props> = ({ rfpId, onBack }) => {
 
     const interval = window.setInterval(() => {
       loadAllData();
-    }, 3500);
+    }, 8000);
 
     return () => {
       window.clearInterval(interval);
