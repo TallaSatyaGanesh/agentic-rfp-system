@@ -8,8 +8,16 @@ Your job is to analyze the raw document segments from an RFP/RFQ/Tender and perf
 Rules:
 - For each clause, keep its exact source page and section title for full traceability.
 - Preserve the exact factual meaning without summarizing or altering requirement intent.
-- Ignore boilerplate headers/footers, table of contents, and introductory pleasantries.
-- DO NOT extract section title headers (e.g. "SECTION 2: TECHNICAL REQUIREMENTS"), subsection headings, scoring/evaluation criteria with percentages (e.g. "(25%)"), or introductory preamble lines ("Proposals will be evaluated based on:"). Extract ONLY actual, substantive, actionable requirement clauses and binding obligations.
+- Ignore boilerplate headers/footers, table of contents (lines with dot leaders and page numbers), running page headers/footers, and introductory pleasantries.
+- DO NOT extract:
+  * Table of Contents entries (e.g., "4.1 Volume-I ... 7", "8.3 Purchaser's Procurement Rights ... 26")
+  * Section title headers (e.g. "SECTION 2: TECHNICAL REQUIREMENTS", "4.1 VOLUME-I [INSTRUCTIONS TO BIDDER]")
+  * Subsection headings or form banners (e.g. "FORM 1: BIDDER INFORMATION")
+  * Standalone document reference numbers or file IDs (e.g. "RFP Ref No.: OCAC-2026", "Tender No. 01")
+  * Standalone publication dates or timestamp fragments (e.g. "03.02.2026 by 5:00 PM")
+  * Buyer/client institutional history and corporate background descriptions without vendor obligations
+  * Scoring/evaluation criteria with percentages (e.g. "(25%)"), or introductory preamble lines ("Proposals will be evaluated based on:")
+- Extract ONLY actual, substantive, actionable requirement clauses and binding bidder/system obligations (eligibility criteria, certifications, technical specs, commercial rates, SLAs, PBG/EMD, deliverables, submission formats).
 """
 
 CLASSIFICATION_AGENT_PROMPT = """You are an elite Requirement Classification Specialist for enterprise RFP proposals.

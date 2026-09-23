@@ -581,3 +581,212 @@ def test_unseen_healthcare_ehr_rfp_generalization():
         assert "Commercial" in categories
         assert "Contractual" in categories
 
+
+def test_toc_dot_leaders_and_page_numbers_rejected():
+    """Verify that Table of Contents entries with dot leaders and target page numbers are rejected."""
+    toc_lines = [
+        "4.1 Volume-I [Instructions to Bidder] ........ 7",
+        "8.3 Purchaser's Procurement Rights ........ 26",
+        "5.2 Technical Specifications ... 14",
+        "Scope of Services … 32",
+        "Section 3: Financial & Commercial Guidelines . . . . . . 45",
+        "Annexure A: Declaration Format ----------------- 52",
+        "Schedule B: Key Deliverables\t\t\t\t\t\t\t60"
+    ]
+    for line in toc_lines:
+        assert _is_non_requirement_heading_or_criterion(line) is True, f"Failed to filter TOC entry: {line}"
+
+
+def test_bracketed_and_punctuated_headings_rejected():
+    """Verify that section headings with square brackets, parentheses, apostrophes, and colons are rejected."""
+    heading_lines = [
+        "4.1 VOLUME-I [INSTRUCTIONS TO BIDDER]",
+        "8.3 Purchaser's Procurement Rights",
+        "Section 2 (Technical & Architecture Specifications)",
+        "Chapter 3: System & Security Requirements",
+        "PART 1 - GENERAL BIDDING CONDITIONS",
+        "Annexure II: Proforma for Technical Proposal",
+        "Volume II: Scope of Work and Technical Architecture"
+    ]
+    for line in heading_lines:
+        assert _is_non_requirement_heading_or_criterion(line) is True, f"Failed to filter heading: {line}"
+
+
+def test_document_reference_metadata_and_date_fragments_rejected():
+    """Verify that standalone document reference numbers, publication notices, and date fragments are rejected."""
+    metadata_lines = [
+        "RFP Ref No.: OCAC-SEGP-SPD-0090-2025-26007",
+        "Tender Notice No: 2026/IT-099",
+        "NIT Ref: GOV-DATA-2026-X",
+        "Bid Reference Number: GEM/2026/B/123456",
+        "Date of Publication: 03.02.2026",
+        "03.02.2026 by 5:00 PM",
+        "Date: 15/03/2026",
+        "FORM 1: BIDDER GENERAL INFORMATION",
+        "ANNEXURE A - UNDERTAKING OF NON-BLACKLISTING",
+        "PROFORMA 2: FINANCIAL TURNOVER CERTIFICATE"
+    ]
+    for line in metadata_lines:
+        assert _is_non_requirement_heading_or_criterion(line) is True, f"Failed to filter metadata/form header: {line}"
+
+
+def test_buyer_institutional_background_rejected():
+    """Verify that buyer institutional corporate profiles and due diligence disclaimers are rejected."""
+    narrative_lines = [
+        "The Centre was established in 1985 as the designated technical directorate of the Department.",
+        "The Authority is a statutory body corporate functioning under the administrative control of the Ministry.",
+        "The Department acts as the nodal agency for e-governance initiatives in the state.",
+        "Bidders must form their own conclusions and satisfy themselves regarding all aspects of the RFP requirements."
+    ]
+    for line in narrative_lines:
+        assert _is_non_requirement_heading_or_criterion(line) is True, f"Failed to filter buyer background/disclaimer: {line}"
+
+
+def test_genuine_actionable_requirements_retained():
+    """Verify that all genuine, substantive requirement categories are preserved without being filtered."""
+    requirements = [
+        # Administrative / Eligibility
+        "The bidder must be registered with GSTN and submit a copy of GST registration certificate along with PAN card.",
+        "The bidder must have an average annual turnover of at least INR 13 Crores during the last three financial years.",
+        "The bidder must have successfully executed at least three software development projects of value not less than INR 2.5 Crores each.",
+        # Certification
+        "The bidder must possess a valid CMMI DEV Level 3 or higher certification as on the date of bid submission.",
+        "The vendor must maintain active ISO 27001 and ISO 9001 certifications throughout the contract duration.",
+        # Commercial / Contractual
+        "The bidder must submit an Earnest Money Deposit (EMD) of INR 5,00,000 online or as a Bank Guarantee.",
+        "The successful bidder shall furnish a Performance Bank Guarantee (PBG) equivalent to 10% of total contract value.",
+        "The proposal shall remain valid for a minimum period of 180 days from the last date of proposal submission.",
+        # Delivery / Staffing
+        "The bidder shall have or undertake to establish a fully operational project office in Bhubaneswar, Odisha within 30 days of award.",
+        "The vendor must deploy a certified Project Manager and at least five senior solution architects for the implementation.",
+        # Technical
+        "The application must support role-based access control and provide RESTful APIs for integration with State Data Centre.",
+        "The cloud platform shall guarantee 99.95% system uptime with automated sub-minute disaster recovery failover.",
+        # Actionable requirement containing metadata words
+        "The proposal must cite RFP Ref No. 2026-01 on the cover envelope and be submitted before 5:00 PM on the due date.",
+        # Numbered actionable requirement
+        "4.1 The system shall maintain 99.95% availability for all public-facing services."
+    ]
+    for req in requirements:
+        assert _is_non_requirement_heading_or_criterion(req) is False, f"Erroneously filtered genuine requirement: {req}"
+
+
+def test_multipage_pdf_layout_sanitation_and_toc_suppression():
+    """
+    End-to-end multi-page PDF validation test:
+    Generates a realistic 4-page procurement RFP containing:
+    - Running headers/footers on all pages
+    - Cover page metadata & document reference number
+    - Table of Contents with dot leaders
+    - Buyer institutional background narrative
+    - Form header banners
+    - 7 genuine actionable requirements across 6 categories
+    Verifies that ONLY the 7 genuine requirements are extracted and classified.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_path = os.path.join(tmpdir, "Enterprise_Tender_MultiPage.pdf")
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = []
+
+        # PAGE 1: Cover Page & Metadata
+        story.append(Paragraph("REQUEST FOR PROPOSAL - ENTERPRISE STATE PORTAL", styles['Heading1']))
+        story.append(Paragraph("RFP Ref No.: TENDER-EGOV-2026-0088", styles['Heading2']))
+        story.append(Paragraph("Date of Publication: 03.02.2026", styles['Normal']))
+        story.append(Spacer(1, 15))
+
+        # Table of Contents
+        story.append(Paragraph("TABLE OF CONTENTS", styles['Heading2']))
+        story.append(Paragraph("4.1 Volume-I [Instructions to Bidder] ........ 7", styles['Normal']))
+        story.append(Paragraph("8.3 Purchaser's Procurement Rights ........ 26", styles['Normal']))
+        story.append(Paragraph("5.2 Technical Architecture Specifications ... 14", styles['Normal']))
+        story.append(Spacer(1, 15))
+
+        # Buyer Background (Informational preamble)
+        story.append(Paragraph("The Centre was established in 1985 as the designated technical directorate of the Department.", styles['Normal']))
+        story.append(Paragraph("Bidders must form their own conclusions and satisfy themselves regarding all aspects of the RFP requirements.", styles['Normal']))
+        story.append(Spacer(1, 15))
+
+        # PAGE 2: Eligibility & Certifications (Genuine Requirements)
+        story.append(Paragraph("Section 2: Pre-Qualification Criteria", styles['Heading2']))
+        story.append(Paragraph("The bidder must be registered with GSTN and submit a copy of GST registration certificate along with PAN card.", styles['Normal']))
+        story.append(Paragraph("The bidder must have an average annual turnover of at least INR 13 Crores during the last three financial years.", styles['Normal']))
+        story.append(Paragraph("The bidder must possess a valid CMMI DEV Level 3 or higher certification as on the date of bid submission.", styles['Normal']))
+        story.append(Paragraph("The bidder must have successfully executed at least three software development projects of value not less than INR 2.5 Crores each.", styles['Normal']))
+        story.append(Spacer(1, 15))
+
+        # PAGE 3: Commercial & Delivery Requirements (Genuine Requirements)
+        story.append(Paragraph("Section 3: Commercial & Delivery Terms", styles['Heading2']))
+        story.append(Paragraph("The bidder must submit an Earnest Money Deposit (EMD) of INR 5,00,000 online or as a Bank Guarantee.", styles['Normal']))
+        story.append(Paragraph("The successful bidder shall furnish a Performance Bank Guarantee (PBG) equivalent to 10% of total contract value.", styles['Normal']))
+        story.append(Paragraph("The bidder shall have or undertake to establish a fully operational project office in Bhubaneswar, Odisha within 30 days of award.", styles['Normal']))
+        story.append(Spacer(1, 15))
+
+        # Form Header Banners (Must be filtered)
+        story.append(Paragraph("FORM 1: BIDDER GENERAL INFORMATION", styles['Heading2']))
+        story.append(Paragraph("ANNEXURE A - UNDERTAKING OF NON-BLACKLISTING", styles['Heading2']))
+
+        doc.build(story)
+
+        state: RFPProposalState = {
+            "rfp_id": "test_multipage_sanitation",
+            "file_path": pdf_path,
+            "metadata": None,
+            "raw_clauses": [],
+            "requirements": [],
+            "compliance_matrix": [],
+            "overall_compliance_score": 0.0,
+            "risks": [],
+            "clarification_questions": [],
+            "go_nogo_decision": None,
+            "go_nogo_notes": None,
+            "proposal_drafts": [],
+            "current_version": 0,
+            "review_reports": [],
+            "revision_count": 0,
+            "max_revisions": 2,
+            "final_approval_decision": None,
+            "human_feedback": None,
+            "active_agent": "Extraction Agent",
+            "workflow_status": "EXTRACTING",
+            "logs": [],
+            "error": None
+        }
+
+        # 1. Extraction Phase
+        extract_result = extract_rfp_node(state)
+        raw_clauses = extract_result["raw_clauses"]
+
+        # Exactly the 7 genuine requirements must be extracted
+        assert len(raw_clauses) == 7, f"Expected exactly 7 genuine requirements, got {len(raw_clauses)}"
+
+        all_clause_text = " ".join(c["text"] for c in raw_clauses)
+
+        # Confirm non-requirements are NOT extracted
+        assert "Volume-I [Instructions to Bidder]" not in all_clause_text
+        assert "Purchaser's Procurement Rights" not in all_clause_text
+        assert "TENDER-EGOV-2026-0088" not in all_clause_text
+        assert "designated technical directorate" not in all_clause_text
+        assert "form their own conclusions" not in all_clause_text
+        assert "FORM 1: BIDDER GENERAL INFORMATION" not in all_clause_text
+        assert "ANNEXURE A - UNDERTAKING" not in all_clause_text
+
+        # Confirm genuine requirements ARE extracted
+        assert "GST registration certificate" in all_clause_text
+        assert "13 Crores" in all_clause_text
+        assert "CMMI DEV Level 3" in all_clause_text
+        assert "2.5 Crores" in all_clause_text
+        assert "5,00,000" in all_clause_text
+        assert "10%" in all_clause_text
+        assert "Bhubaneswar" in all_clause_text
+
+        # 2. Classification Phase
+        state["raw_clauses"] = raw_clauses
+        classify_result = classify_requirements_node(state)
+        classified_reqs = classify_result["requirements"]
+
+        assert len(classified_reqs) == 7
+        for req in classified_reqs:
+            assert req["req_code"].startswith("REQ-")
+            assert len(req["normalized_description"]) > 10
+

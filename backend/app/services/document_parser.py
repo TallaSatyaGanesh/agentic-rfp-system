@@ -55,56 +55,105 @@ class DocumentParserService:
         doc = fitz.open(file_path)
         blocks_out: List[ExtractedBlock] = []
         current_section = "Introduction & General Information"
+        num_pages = len(doc)
 
-        for page_num in range(len(doc)):
+        import re
+
+        # Pass 1: Extract all raw blocks with page geometry
+        raw_page_blocks: List[Dict[str, Any]] = []
+        margin_text_counts: Dict[str, int] = {}
+
+        for page_num in range(num_pages):
             page = doc[page_num]
-            # page_num is 0-indexed in fitz, so 1-indexed for citations
             page_index = page_num + 1
-            
-            # Extract text blocks with layout info
+            page_height = page.rect.height
             page_blocks = page.get_text("blocks")
-            
+
             for b in page_blocks:
                 # b = (x0, y0, x1, y1, text, block_no, block_type)
                 text = b[4].strip()
                 if not text:
                     continue
 
-                # Heading detection heuristic:
-                # Genuine section headings start with section/number prefix or clean uppercase title
-                lines = text.split("\n")
-                first_line = lines[0].strip()
-                is_heading = False
+                x0, y0, x1, y1 = b[0], b[1], b[2], b[3]
+                is_top_margin = (y0 <= 40)
+                is_bottom_margin = (y1 >= (page_height - 40))
 
-                import re
-                is_section_header = bool(
-                    re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|ANNEXURE|SCHEDULE|ATTACHMENT|EXHIBIT|\d+(?:\.\d+)*\.?)\s+[A-Za-z0-9\s&,\.\-–—:/()]+$', first_line, re.IGNORECASE)
-                    or (
-                        first_line.isupper() 
-                        and 5 <= len(first_line) <= 60 
-                        and len(first_line.split()) >= 2 
-                        and not first_line.startswith("REQ-") 
-                        and first_line not in ["YES", "NO", "N/A", "TRUE", "FALSE", "MANDATORY", "OPTIONAL"]
-                    )
+                # Track normalized short strings in extreme margins for multi-page documents
+                if (is_top_margin or is_bottom_margin) and len(text) < 140 and len(text.split("\n")) <= 2:
+                    # Normalize digits for page numbers e.g. "Page 1 of 50" -> "page # of #"
+                    norm_margin_str = re.sub(r'\d+', '#', text.lower().strip())
+                    margin_text_counts[norm_margin_str] = margin_text_counts.get(norm_margin_str, 0) + 1
+
+                raw_page_blocks.append({
+                    "text": text,
+                    "page_index": page_index,
+                    "x0": x0,
+                    "y0": y0,
+                    "x1": x1,
+                    "y1": y1,
+                    "page_height": page_height,
+                    "is_top_margin": is_top_margin,
+                    "is_bottom_margin": is_bottom_margin
+                })
+
+        # Pass 2: Filter recurring headers/footers and identify headings / TOC entries
+        for rb in raw_page_blocks:
+            text = rb["text"]
+            page_index = rb["page_index"]
+            is_top = rb["is_top_margin"]
+            is_bottom = rb["is_bottom_margin"]
+
+            # Check if block is a recurring running header/footer in margin area
+            if (is_top or is_bottom) and num_pages >= 3 and len(text) < 140 and len(text.split("\n")) <= 2:
+                norm_margin_str = re.sub(r'\d+', '#', text.lower().strip())
+                # If seen across multiple pages or matches standalone page numbering format in margins
+                is_page_num_artifact = bool(
+                    re.match(r'^(?:page\s+)?#(?:\s+of\s+#)?$', norm_margin_str)
+                    or re.match(r'^#\s*\|\s*p\s*a\s*g\s*e$', norm_margin_str)
                 )
+                if margin_text_counts.get(norm_margin_str, 0) >= 2 or is_page_num_artifact:
+                    # Skip running header/footer layout noise
+                    continue
 
-                if is_section_header and len(lines) <= 2:
-                    current_section = first_line
-                    is_heading = True
+            lines = text.split("\n")
+            first_line = lines[0].strip()
+            is_heading = False
 
-                blocks_out.append(
-                    ExtractedBlock(
-                        text=text,
-                        page_number=page_index,
-                        section_title=current_section,
-                        block_type="heading" if is_heading else "paragraph"
-                    )
+            # Check for Table of Contents dot leaders: e.g. "4.1 Section Title ........ 7" or "Scope … 12"
+            is_toc_entry = bool(re.search(r'(?:\.{2,}|…+|\s*\.\s*\.\s*|\s*[-–—]{3,}|\t+)\s*\d+\s*$', text))
+
+            # Heading detection heuristic:
+            # Genuine section headings start with section/number prefix or clean uppercase title
+            is_section_header = bool(
+                re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|ANNEXURE|SCHEDULE|ATTACHMENT|EXHIBIT|\d+(?:\.\d+)*\.?)\s+[A-Za-z0-9\s&,\.\-–—:/()\[\]\'"’“”]+$', first_line, re.IGNORECASE)
+                or (
+                    first_line.isupper()
+                    and 5 <= len(first_line) <= 80
+                    and len(first_line.split()) >= 2
+                    and not first_line.startswith("REQ-")
+                    and first_line not in ["YES", "NO", "N/A", "TRUE", "FALSE", "MANDATORY", "OPTIONAL"]
                 )
+            )
+
+            if is_section_header and len(lines) <= 2 and not is_toc_entry:
+                current_section = first_line
+                is_heading = True
+
+            block_type = "toc" if is_toc_entry else ("heading" if is_heading else "paragraph")
+
+            blocks_out.append(
+                ExtractedBlock(
+                    text=text,
+                    page_number=page_index,
+                    section_title=current_section,
+                    block_type=block_type
+                )
+            )
 
         doc.close()
 
         # Merge broken paragraph fragments within same page & section
-        import re
         merged_blocks: List[ExtractedBlock] = []
         for b in blocks_out:
             if not merged_blocks:

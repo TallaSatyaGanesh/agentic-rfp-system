@@ -310,7 +310,9 @@ def _extract_all_clauses(blocks: List[ExtractedBlock]) -> tuple[List[RawClause],
                     "verbatim from the following document blocks. For each clause:\n"
                     "- Extract exact verbatim text (never summarize, alter, or fabricate requirements).\n"
                     "- Set source_page to the exact Page number indicated in the block header.\n"
-                    "- Set source_section to the exact Section indicated in the block header.\n\n"
+                    "- Set source_section to the exact Section indicated in the block header.\n"
+                    "- NEVER extract Table of Contents lines (e.g. lines with dot leaders and page numbers), section headings, "
+                    "document reference numbers/metadata, running headers/footers, or buyer corporate history descriptions.\n\n"
                     f"Document Blocks:\n{batch_text}"
                 )
                 batch_result: ExtractedClauseBatch = structured_batch_llm.invoke([
@@ -434,12 +436,15 @@ def _clean_clause_text(text: str) -> str:
 def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     """
     Returns True if the text represents:
-    - Section / chapter / subsection headers
+    - Section / chapter / subsection headers (with or without brackets/apostrophes/quotes)
+    - Table of Contents entries with dot leaders and target page numbers
+    - Standalone document reference numbers, solicitation IDs, publication date fragments
     - Buyer / client / authority internal actions, nominations, payment disbursements, disclaimers, or rights
+    - Buyer institutional background & corporate history descriptions without vendor obligations
     - Strategic objectives, marketing context, or background preambles without concrete vendor obligations
     - Template drafting placeholders (e.g. <Define the new modules...>, <Mention the additional...>)
     - Proforma agreements, non-judicial stamp paper drafting templates (e.g. WHEREAS We, ...)
-    - Form artifacts (Date, Place, Name, Signature of Authorized Signatory)
+    - Form artifacts (Date, Place, Name, Signature of Authorized Signatory, Form titles)
     - Incomplete bullet fragments, dangling colons/prepositions, and SLA preamble headers
     - Evaluation / scoring criteria, committee actions, marks formulas, QCBS calculations
     - End-user / society / departmental manual workflow walkthroughs (preserving underlying system capabilities)
@@ -471,16 +476,43 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         re.IGNORECASE
     ))
 
-    # 1. Section / Chapter / Part / Appendix Title Headers
-    if re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|ANNEXURE|SCHEDULE|\d+\.)\s+[A-Za-z0-9\s&,\.\-–—:/()]+$', clean_text, re.IGNORECASE) and not has_obligation_modal:
+    # Substantive metrics safeguard: preserved even in ambiguous lead-ins
+    has_substantive_metrics = bool(re.search(
+        r'\b(?:\d+%\s*uptime|\d+\s*(?:days?|hours?|months?|weeks?|years?|crores?|lakhs?|inr|usd|cmmi|iso)|24\s*x\s*7|api|sso|2fa|rbac|backup|encryption|audit\s+trail|helpdesk|warranty|mtbf|mttr|downtime|penalty)\b',
+        clean_text,
+        re.IGNORECASE
+    ))
+
+    # 0. Table of Contents Entries with dot leaders / leader lines followed by target page number
+    # e.g. "4.1 Volume-I [Instructions to Bidder] ........ 7", "8.3 Purchaser's Procurement Rights ........ 26", "Scope … 14"
+    if re.search(r'(?:\.{2,}|…+|\s*\.\s*\.\s*|\s*[-–—]{3,}|\t+)\s*\d+\s*$', clean_text):
         return True
 
-    # 2. Subsection Title Headings without verbs/modals (e.g., "1. Technical Specifications", "5.1 Commercial Terms", "A.1 Database Engine")
-    if re.match(r'^(?:[A-Z]\.|\d+(?:\.\d+)*\.?)\s+[A-Z][A-Za-z0-9\s&,\.\-–—:/()]+$', clean_text) and not has_obligation_modal:
+    # 1. Section / Chapter / Part / Appendix / Annexure Title Headers
+    if (
+        re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|ANNEXURE|SCHEDULE|ATTACHMENT|EXHIBIT|\d+(?:\.\d+)*\.?)\s+[A-Za-z0-9\s&,\.\-–—:/()\[\]\'"’“”]+$', clean_text, re.IGNORECASE)
+        and not has_obligation_modal
+        and not has_substantive_metrics
+    ):
+        return True
+
+    # 2. Subsection Title Headings without verbs/modals (e.g., "1. Technical Specifications", "5.1 Commercial Terms", "4.1 Volume-I [Instructions to Bidder]", "8.3 Purchaser's Procurement Rights")
+    if (
+        re.match(r'^(?:[A-Z]\.|\d+(?:\.\d+)*\.?)\s+[A-Za-z0-9\s&,\.\-–—:/()\[\]\'"’“”]+$', clean_text)
+        and not has_obligation_modal
+        and not has_substantive_metrics
+    ):
+        return True
+
+    # 2.5 Form titles, sheet names, and template header banners (e.g. "FORM 1: BIDDER GENERAL INFORMATION", "ANNEXURE A - UNDERTAKING")
+    if (
+        re.match(r'^(?:FORM|ANNEXURE|APPENDIX|SCHEDULE|ATTACHMENT|EXHIBIT|PROFORMA)\s*[-–—:\s]+(?:[A-Z0-9IVX]+\s*[-–—:\s]+)?(?:BIDDER|PROPOSAL|DECLARATION|UNDERTAKING|SUBMISSION|FINANCIAL|TECHNICAL|COMMERCIAL|TURNOVER|EXPERIENCE|PROFILE|FORMAT|TEMPLATE|CHECKLIST|ELIGIBILITY)[\sA-Za-z0-9&/()\-–—]*$', clean_text, re.IGNORECASE)
+        and not has_obligation_modal
+        and not has_substantive_metrics
+    ):
         return True
 
     # 3. Buyer / Client / Authority Responsibilities, Disclaimers & Internal Actions
-    # Distinguish buyer-side duties/rights/nominations/reviews/disclaimers from vendor obligations
     buyer_subjects = (
         r'(?:(?:the\s+)?(?:duly\s+constituted\s+)?(?:rcs(?:\s*[-_ /]\s*<[a-z0-9_]+>|\s*<[a-z0-9_]+>|\s+office|\s+[a-z0-9_]+)?|'
         r'buyer|client|department|authority|state(?:\s+government)?|pao|procuring\s+entity|tender\s+inviting\s+authority|'
@@ -492,6 +524,15 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         clean_text,
         re.IGNORECASE
     ) and not has_vendor_actor:
+        return True
+
+    # Buyer / Issuing Authority Corporate Profile & Organizational History narrative
+    # (e.g. "The Centre was established in 1985...", "The Department is the designated nodal agency...")
+    if (
+        re.search(r'\b(?:is\s+the\s+designated\s+(?:technical\s+)?directorate|was\s+established\s+(?:in|under)|was\s+incorporated\s+(?:in|under)|is\s+a\s+(?:body\s+corporate|nodal\s+agency|registered\s+society|statutory\s+body|government\s+undertaking|state\s+agency|public\s+sector\s+undertaking)|functions?\s+under\s+the\s+administrative\s+control\s+of|acts?\s+as\s+(?:the\s+)?nodal\s+agency|is\s+committed\s+to\s+fostering|has\s+been\s+mandated\s+to|mandate\s+is\s+to\s+provide)\b', clean_text, re.IGNORECASE)
+        and not has_vendor_actor
+        and not has_substantive_metrics
+    ):
         return True
 
     # Buyer reservation rights & outright bid rejection by client
@@ -514,8 +555,8 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
 
     # Recipient / Prospective Bidder Independent Due Diligence & Deemed Acceptance Advisories
     if (
-        re.search(r'\b(?:recipients?|interested\s+part(?:y|ies)|prospective\s+bidders?|applicants?)\s+(?:must|should|is\s+advised\s+to|are\s+advised\s+to|shall)\s+(?:conduct|verify|satisfy|make)\s+(?:its|their)\s+own\s+(?:independent\s+)?(?:investigation|assessment|inquiries|analysis|due\s+diligence)\b', clean_text, re.IGNORECASE)
-        or re.search(r'\b(?:recipients?|prospective\s+bidders?)\s+should\s+verify\s+the\s+accuracy,\s*reliability\s+and\s+completeness\b', clean_text, re.IGNORECASE)
+        re.search(r'\b(?:recipients?|interested\s+part(?:y|ies)|prospective\s+bidders?|applicants?|bidders?)\s+(?:must|should|is\s+advised\s+to|are\s+advised\s+to|shall)\s+(?:conduct|verify|satisfy|make|form)\s+(?:its|their)\s+(?:own\s+)?(?:independent\s+)?(?:investigation|assessment|inquiries|analysis|due\s+diligence|conclusions?)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:recipients?|prospective\s+bidders?|bidders?)\s+should\s+verify\s+the\s+accuracy,\s*reliability\s+and\s+completeness\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:recipient|bidder)\s+(?:will|shall),?\s+(?:by\s+responding\s+to[^\n\r,]+,?\s+)?be\s+deemed\s+to\s+have\s+accepted\s+the\s+terms\b', clean_text, re.IGNORECASE)
     ) and not has_vendor_actor:
         return True
@@ -559,13 +600,6 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         return True
 
     # 4. Strategic Objectives, Marketing Context, Background Preambles & Pure List Lead-Ins
-    # Safeguard 1: Structural lead-ins are excluded ONLY when they contain no concrete requirements or SLA/delivery metrics
-    has_substantive_metrics = bool(re.search(
-        r'\b(?:\d+%\s*uptime|\d+\s*(?:days?|hours?|months?|weeks?|years?|crores?|lakhs?|inr|usd|cmmi|iso)|24\s*x\s*7|api|sso|2fa|rbac|backup|encryption|audit\s+trail|helpdesk|warranty|mtbf|mttr|downtime|penalty)\b',
-        clean_text,
-        re.IGNORECASE
-    ))
-
     is_pure_structural_leadin = bool(
         re.search(r'^(?:following\s+are\s+(?:the\s+)?(?:deliverables|services|requirements|modules|responsibilities|milestones)|the\s+service\s+provider\s+is\s+expected\s+to\s+provide\s+[^\n\r.]+?\s+as\s+follows|the\s+deliverables\s+(?:and\s+payment\s+milestones\s+)?are\s+as\s+below|as\s+per\s+the\s+details\s+given\s+below)[:\s.]*$', clean_text, re.IGNORECASE)
         or (
@@ -700,14 +734,22 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     ):
         return True
 
-    # 10. Tender Deposits, EMD, and Bank Guarantee Logistics
-    if (
-        re.search(r'\b(?:online\s+payment\s+of\s+emd|payment\s+of\s+emd|earnest\s+money\s+deposit|bid\s+security\s+deposit|tender\s+fee|cost\s+of\s+tender)\b', clean_text, re.IGNORECASE)
-        or re.search(r'\b(?:payment\s+(?:of\s+emd\s+)?by\s+(?:cheque|cash|tdr|fdr|dd|demand\s+draft|rtgs|neft)\s+(?:will|shall|is)\b)', clean_text, re.IGNORECASE)
-        or re.search(r'\b(?:bank\s+guarant[ee]{2}|bank\s+gurantee|bg)\s+(?:favoring|in\s+favou?r\s+of|shall\s+be\s+valid|should\s+be\s+valid|is\s+extendable|needs?\s+to\s+be\s+sent\s+by\s+post|of\s+equivalent\s+amount)\b', clean_text, re.IGNORECASE)
-        or re.search(r'\b(?:bid-?security\s+declaration|exempt(?:ed|ion)?\s+(?:from\s+)?(?:emd|earnest\s+money|bg|bid\s+security)|exemption\s+certificate|without\s+emd|rejected\s+without\s+emd)\b', clean_text, re.IGNORECASE)
-    ):
-        return True
+    # Check if clause contains concrete monetary fee / deposit amount
+    has_financial_amount = bool(re.search(
+        r'\b(?:inr|usd|eur|gbp|rs\.?|₹|\$|€|£)\s*[\d,]+(?:\.\d+)?|\b\d+(?:,\d+)*(?:\s*(?:crores?|lakhs?|million|billion|thousand|k))\b|\b\d+%\s*(?:of\s+)?(?:the\s+)?(?:total\s+)?(?:contract|bid|project|proposal)\b',
+        clean_text,
+        re.IGNORECASE
+    ))
+
+    # 10. Tender Deposits, EMD, and Bank Guarantee Logistics (procedural walkthroughs without concrete monetary obligation)
+    if not has_financial_amount:
+        if (
+            re.search(r'\b(?:online\s+payment\s+of\s+emd|payment\s+of\s+emd|earnest\s+money\s+deposit|bid\s+security\s+deposit|tender\s+fee|cost\s+of\s+tender)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:payment\s+(?:of\s+emd\s+)?by\s+(?:cheque|cash|tdr|fdr|dd|demand\s+draft|rtgs|neft)\s+(?:will|shall|is)\b)', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:bank\s+guarant[ee]{2}|bank\s+gurantee|bg)\s+(?:favoring|in\s+favou?r\s+of|shall\s+be\s+valid|should\s+be\s+valid|is\s+extendable|needs?\s+to\s+be\s+sent\s+by\s+post|of\s+equivalent\s+amount)\b', clean_text, re.IGNORECASE)
+            or re.search(r'\b(?:bid-?security\s+declaration|exempt(?:ed|ion)?\s+(?:from\s+)?(?:emd|earnest\s+money|bg|bid\s+security)|exemption\s+certificate|without\s+emd|rejected\s+without\s+emd)\b', clean_text, re.IGNORECASE)
+        ):
+            return True
 
     # 11. Form Templates, Spreadsheet Sequences, and Drafting Placeholders
     if (
@@ -722,7 +764,7 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     if (
         re.search(r'\b(?:REQUEST\s+FOR\s+PROPOSAL|SOLICITATION\s+DOCUMENT|TENDER\s+DOCUMENT|INVITATION\s+TO\s+BID)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:System\s+Specification|Requirements\s+Document|Commercial\s+Requirements\s+Document|Specification\s+Document|Scope\s+of\s+Work|Vendor\s+Commitments)\b', clean_text, re.IGNORECASE)
-    ) and not has_obligation_modal:
+    ) and not has_obligation_modal and not has_substantive_metrics:
         return True
 
     # 13. Table Column Headers
@@ -750,8 +792,27 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
     ):
         return True
 
-    # 15. Metadata Key-Value Header lines without requirements
-    if re.match(r'^(?:DOCUMENT\s+REF|ISSUED\s+BY|DUE\s+DATE|SUBMISSION\s+DEADLINE|CLIENT|PROJECT\s+TITLE|TITLE|AUTHORITY)[\s:\-–—]+[^\n\r]+$', clean_text, re.IGNORECASE) and not has_obligation_modal:
+    # 15. Document Identifiers and Metadata Key-Value Header lines without requirements
+    # Match standalone solicitation identifiers e.g. "RFP Ref No.: OCAC-SEGP-SPD-0090-2025-26007", "Tender No. 2026/01"
+    if (
+        re.match(r'^(?:RFP|TENDER|SOLICITATION|BID|NOTICE|NIT|EOI|ENQUIRY|DOCUMENT|CORRIGENDUM|ADDENDUM|CONTRACT|PROJECT)\s*(?:REF(?:ERENCE)?|NO\.?|NUMBER|ID|CODE|IDENTIFIER|NOTICE)*(?:\s*(?:REF(?:ERENCE)?|NO\.?|NUMBER|ID|CODE|IDENTIFIER|NOTICE))*\s*[:\-–—]\s*[A-Za-z0-9\-_/]+(?:\s+[A-Za-z0-9\-_/]+)*$', clean_text, re.IGNORECASE)
+        and not has_obligation_modal
+        and not has_substantive_metrics
+    ):
+        return True
+
+    if (
+        re.match(r'^(?:DOCUMENT\s+REF|ISSUED\s+BY|DUE\s+DATE|SUBMISSION\s+DEADLINE|CLOSING\s+DATE|DATE\s+OF\s+PUBLICATION|PUBLICATION\s+DATE|BID\s+VALIDITY|PROJECT\s+TITLE|TITLE|AUTHORITY|NAME\s+OF\s+WORK|TENDER\s+NOTICE\s+NO|FILE\s+NO)[\s:\-–—]+[^\n\r]+$', clean_text, re.IGNORECASE)
+        and not has_obligation_modal
+        and not has_substantive_metrics
+    ):
+        return True
+
+    # Standalone date/timestamp fragments
+    if (
+        re.match(r'^(?:Date|Time|Dated)?\s*[:\-–—]?\s*(?:\d{1,2}[\.\-\/\s]\d{1,2}[\.\-\/\s]\d{2,4}|\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+\d{2,4})(?:\s+(?:by|at|before|on)?\s+\d{1,2}(?::\d{2})?(?:\s*(?:AM|PM|IST|UTC|EST|PST))?)?\.?\s*$', clean_text, re.IGNORECASE)
+        and not has_obligation_modal
+    ):
         return True
 
     # 16. Pre-Bid Conference Logistics & Notice Dissemination
@@ -771,22 +832,30 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
 
 def _is_heading_or_structural_block(block: ExtractedBlock) -> bool:
     """
-    Identifies if a block is a section heading, document title, or table header.
+    Identifies if a block is a section heading, document title, table header, or TOC entry.
     Structural blocks must never be stitched into body paragraphs or other blocks.
     """
-    if block.block_type in ("heading", "title", "table_header", "table"):
+    if block.block_type in ("heading", "title", "table_header", "table", "toc", "header", "footer"):
         return True
 
     text = block.text.strip()
     if not text:
         return True
 
-    # Matches numbered section titles e.g. "1. Purpose", "2. Scope of Work", "Section 3: Technical Specs", "Chapter 4"
-    if re.match(r'^(?:(?:\d{1,2}\.){1,3}\d{0,2}\s+[A-Z]|(?:Section|Chapter|Annexure|Appendix|Schedule|Part|Module)\s+(?:\d+|[A-ZIVX]+)[\s:\-–—])', text, re.IGNORECASE):
+    # Matches TOC entries with dot leaders
+    if re.search(r'(?:\.{2,}|…+|\s*\.\s*\.\s*|\s*[-–—]{3,}|\t+)\s*\d+\s*$', text):
+        return True
+
+    # Matches numbered section titles e.g. "1. Purpose", "2. Scope of Work", "Section 3: Technical Specs", "4.1 Volume-I [Instructions to Bidder]"
+    if re.match(r'^(?:(?:\d{1,2}\.){1,3}\d{0,2}\s+[A-Za-z0-9]|(?:Section|Chapter|Annexure|Appendix|Schedule|Part|Module|Volume)\s+(?:\d+|[A-ZIVX]+)[\s:\-–—/\[])', text, re.IGNORECASE):
         return True
 
     # Matches standard document headers/titles
     if re.match(r'^(?:REQUEST\s+FOR\s+PROPOSAL|SOLICITATION\s+DOCUMENT|TENDER\s+DOCUMENT|INVITATION\s+TO\s+BID|TABLE\s+OF\s+CONTENTS|SCOPE\s+OF\s+WORK|COMMERCIAL\s+PROPOSAL|TECHNICAL\s+PROPOSAL)(?:\s*[\-–—:\(].*)?$', text, re.IGNORECASE):
+        return True
+
+    # Matches form titles & template header banners
+    if re.match(r'^(?:FORM|ANNEXURE|APPENDIX|SCHEDULE|ATTACHMENT|EXHIBIT|PROFORMA)\s*[-–—:\s]+(?:[A-Z0-9IVX]+\s*[-–—:\s]+)?(?:BIDDER|PROPOSAL|DECLARATION|UNDERTAKING|SUBMISSION|FINANCIAL|TECHNICAL|COMMERCIAL|TURNOVER|EXPERIENCE|PROFILE|FORMAT|TEMPLATE|CHECKLIST|ELIGIBILITY)[\sA-Za-z0-9&/()\-–—]*$', text, re.IGNORECASE):
         return True
 
     # Matches table header line e.g. "Req ID Category Requirement Specification Mandatory" or "Sl. No. Parameter Minimum Specification"
@@ -928,7 +997,7 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> tuple[List[RawC
 
     # Numbered clause headers e.g. "2.1 High Availability:", "REQ-01:", "3.2.1"
     numbered_clause_pattern = re.compile(
-        r'^\s*(?:(?:\d{1,2}\.){1,3}\d{1,2}|\d{1,2}[\.\)]|[A-Z]\.\s+(?=[A-Z])|(?:REQ|RFP|SPEC|DELIV|SEC|TECH|FUNC|LEGAL|SLA)[-_:\s])',
+        r'^\s*(?:(?:\d{1,2}\.){1,3}\d{1,2}|\d{1,2}[\.\)]|[A-Z]\.\s+(?=[A-Z])|(?:REQ|SPEC|DELIV|SEC|TECH|FUNC|LEGAL|SLA)[-_:\s])',
         re.IGNORECASE
     )
 
@@ -952,8 +1021,13 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> tuple[List[RawC
         ):
             continue
 
-        tier = _classify_section_tier(b.section_title)
         has_explicit_id_in_block = bool(re.search(r'\bREQ-[A-Z0-9]+-\d{3,4}\b', text, re.IGNORECASE))
+
+        # Skip non-body structural blocks (headings, TOC entries, running headers/footers) unless explicit REQ ID is present
+        if b.block_type in ("heading", "title", "toc", "header", "footer") and not has_explicit_id_in_block:
+            continue
+
+        tier = _classify_section_tier(b.section_title)
 
         # Context-aware section filtering:
         # Purely contextual sections (Purpose, Evaluation, Timeline, Submission Instructions) are skipped unless explicit REQ ID is present
