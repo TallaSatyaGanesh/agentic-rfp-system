@@ -568,7 +568,7 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
 
     # 1. Section / Chapter / Part / Appendix / Annexure Title Headers
     if (
-        re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|ANNEXURE|SCHEDULE|ATTACHMENT|EXHIBIT|\d+(?:\.\d+)*\.?)\s+[A-Za-z0-9\s&,\.\-–—:/()\[\]\'"’“”]+$', clean_text, re.IGNORECASE)
+        re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|ANNEXURE|SCHEDULE|ATTACHMENT|EXHIBIT|\d+(?:\.\d+)*\.?)\s+[A-Za-z0-9\s&,\.\-–—:/()\[\]\'"’“”<>_]+$', clean_text, re.IGNORECASE)
         and not has_obligation_modal
         and not has_substantive_metrics
     ):
@@ -576,7 +576,7 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
 
     # 2. Subsection Title Headings without verbs/modals (e.g., "1. Technical Specifications", "5.1 Commercial Terms", "4.1 Volume-I [Instructions to Bidder]", "8.3 Purchaser's Procurement Rights")
     if (
-        re.match(r'^(?:[A-Z]\.|\d+(?:\.\d+)*\.?)\s+[A-Za-z0-9\s&,\.\-–—:/()\[\]\'"’“”]+$', clean_text)
+        re.match(r'^(?:[A-Z]\.|\d+(?:\.\d+)*\.?)\s+[A-Za-z0-9\s&,\.\-–—:/()\[\]\'"’“”<>_]+$', clean_text)
         and not has_obligation_modal
         and not has_substantive_metrics
     ):
@@ -650,6 +650,8 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         or re.search(r'^\s*(?:[a-zA-Z0-9][\.\)]\s*)?(?:(?:The\s+)?(?:bidder|vendor|contractor)\s+(?:must|shall|should|is\s+required\s+to)\s+(?:submit|furnish|provide)\s+(?:the\s+)?(?:declaration|undertaking|certificate)\s+)?(?:Statement\s+to\s+that\s+effect\s+should\s+be\s+certified\s+by|Declaration\s+in\s+the\s+prescribed\s+format|Certificate\s+from\s+CA|Copy\s+of\s+valid\s+certificate)\b', clean_text, re.IGNORECASE)
         or re.search(r'^\s*(?:(?:The\s+)?(?:bidder|vendor|contractor)\s+(?:must|shall|should|is\s+required\s+to)\s+submit\s+(?:the\s+)?(?:declaration|undertaking)\s+)?(?:Declaration|Undertaking)\s+in\s+the\s+prescribed\s+format\.?\s*$', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:loss\s+or\s+damage\s+arises\s+in\s+connection\s+with\s+any\s+negligence|misrepresentation\s+on\s+the\s+part\s+of)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\bno\s+(?:individual|separate|further|direct|written|special)?\s*(?:correspondence|communication|queries|intimation|clarification|letters?)\s+(?:will|shall|can|may)\s+be\s+(?:made|entertained|sent|issued|accepted|responded\s+to|considered|entered\s+into)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:in\s+this\s+regard\s+no\s+(?:individual|separate\s+)?correspondence\s+(?:will|shall)\s+be\s+made|no\s+correspondence\s+(?:will|shall)\s+be\s+(?:made|entertained|entered\s+into))\b', clean_text, re.IGNORECASE)
     ) and not has_vendor_actor:
         return True
 
@@ -793,6 +795,9 @@ def _is_non_requirement_heading_or_criterion(text: str) -> bool:
         or re.search(r'\[(?:please\s+)?(?:attach|define|insert|specify|enter|fill|select|provide|mention)\b[^\]]*\]', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:please\s+attach\s+(?:certified\s+copy|copy\s+of))\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:define\s+the\s+new\s+modules|define/change\s+the\s+procedure|define\s+the\s+requirements?\s+here)\b', clean_text, re.IGNORECASE)
+        or re.search(r'\(?(?:Please\s+)?(?:define|change|specify|insert|fill|select|describe|modify)(?:/|\s+or\s+)(?:define|change|specify|insert|fill|select|describe|modify)\b[^\)]*\)?', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:please\s+(?:define|change|specify|insert|fill|select|describe|modify|provide|update|customize)\s+(?:the\s+)?[a-z0-9_\-\s]+(?:as\s+per|according\s+to|for)\s+(?:your|the)\s+(?:state|department|organization|agency|client|buyer|rules?|act|requirements?))\b', clean_text, re.IGNORECASE)
+        or re.search(r'\b(?:below\s+mentioned\s+(?:modules?|processes|sections?|features?|requirements?)\s+needs?\s+to\s+be\s+prepared|this\s+process\s+outlines\s+the\s+steps\s+for)\b', clean_text, re.IGNORECASE)
         or re.search(r'\(?(?:Sample\s+Format|Proforma|Draft\s+Agreement|Standard\s+Format|Template\s+Format)\s*[-–—:]\s*(?:To\s+be\s+executed|To\s+be\s+submitted|On\s+non-judicial|On\s+stamp\s+paper)', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:To\s+be\s+executed\s+on\s+(?:a\s+)?non-judicial\s+stamped?\s+paper)\b', clean_text, re.IGNORECASE)
         or re.search(r'\b(?:WHEREAS\s+We\b|hereinafter\s+referred\s+to\s+as\s+the\s+COMPANY\b|NOW\s+THEREFORE,\s+in\s+consideration\s+of\s+the\s+foregoing\b)', clean_text, re.IGNORECASE)
@@ -1296,7 +1301,7 @@ def _extract_clauses_rule_based(blocks: List[ExtractedBlock]) -> tuple[List[RawC
 
             # Sub-split sentences if trailing sentence is a buyer disclaimer/reservation
             buyer_split_pattern = re.compile(
-                r'(?<=[.!?])\s+(?=(?:[A-Z0-9_\-\s]+?\s+)?(?:reserves?\s+the\s+rights?|may\s+terminate|makes?\s+no\s+commitment|shall\s+invoke|will\s+notify\s+each\s+unsuccessful|shall\s+not\s+be\s+responsible|will\s+not\s+be\s+considered))\b',
+                r'(?<=[.!?])\s+(?=(?:[A-Z0-9_\-\s]+?\s+)?(?:reserves?\s+the\s+rights?|may\s+terminate|makes?\s+no\s+commitment|shall\s+invoke|will\s+notify\s+each\s+unsuccessful|shall\s+not\s+be\s+responsible|will\s+not\s+be\s+considered|no\s+(?:individual\s+|separate\s+)?correspondence\s+(?:will|shall)\s+be\s+made))\b',
                 re.IGNORECASE
             )
             split_buyer_chunks = []

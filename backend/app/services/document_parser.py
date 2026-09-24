@@ -131,7 +131,7 @@ class DocumentParserService:
 
             is_section_header = not is_date_line and not is_bracketed_subtitle and bool(
                 (
-                    re.match(r'^(?:(?:SECTION|CHAPTER|APPENDIX|ANNEXURE|ATTACHMENT|EXHIBIT)\s+(?:(?:\d+(?:\.\d+)*|[A-Z0-9\-_]+)[:\.]?)|(?:VOLUME|PART|SCHEDULE)\s+(?:\d+(?:\.\d+)*|[A-Z]\b|[-–—:]|(?-i:[IVXLCDM]+))|\d+(?:\.\d+)+\.?|\d+\.)\s+[A-Za-z0-9\s&,\.\-–—:/()\[\]\'"’“”]+$', first_line, re.IGNORECASE)
+                    re.match(r'^(?:(?:SECTION|CHAPTER|APPENDIX|ANNEXURE|ATTACHMENT|EXHIBIT)\s+(?:(?:\d+(?:\.\d+)*|[A-Z0-9\-_]+)[:\.]?)|(?:VOLUME|PART|SCHEDULE)\s+(?:\d+(?:\.\d+)*|[A-Z]\b|[-–—:]|(?-i:[IVXLCDM]+))|\d+(?:\.\d+)+\.?|\d+\.)\s+[A-Za-z0-9\s&,\.\-–—:/()\[\]\'"’“”<>_]+$', first_line, re.IGNORECASE)
                     and not re.search(r'\b(?:project|projects|month|months|year|years|day|days|hour|hours|crore|cr|lakh|percent|%|shall|must|not\s+less\s+than|minimum|executive|developer|engineer|manager|architect|expert|specialist|officer|consultant|personnel|staff|manpower|resource)\b', first_line, re.IGNORECASE)
                 )
                 or (
@@ -147,19 +147,34 @@ class DocumentParserService:
 
             if is_section_header and not is_toc_entry:
                 current_section = first_line
-                if len(lines) <= 2:
-                    is_heading = True
-
-            block_type = "toc" if is_toc_entry else ("heading" if is_heading else "paragraph")
-
-            blocks_out.append(
-                ExtractedBlock(
-                    text=text,
-                    page_number=page_index,
-                    section_title=current_section,
-                    block_type=block_type
+                blocks_out.append(
+                    ExtractedBlock(
+                        text=first_line,
+                        page_number=page_index,
+                        section_title=current_section,
+                        block_type="heading"
+                    )
                 )
-            )
+                rest_text = "\n".join(lines[1:]).strip()
+                if rest_text:
+                    blocks_out.append(
+                        ExtractedBlock(
+                            text=rest_text,
+                            page_number=page_index,
+                            section_title=current_section,
+                            block_type="paragraph"
+                        )
+                    )
+            else:
+                block_type = "toc" if is_toc_entry else "paragraph"
+                blocks_out.append(
+                    ExtractedBlock(
+                        text=text,
+                        page_number=page_index,
+                        section_title=current_section,
+                        block_type=block_type
+                    )
+                )
 
         doc.close()
 

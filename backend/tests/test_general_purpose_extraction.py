@@ -1140,3 +1140,137 @@ def test_targeted_extraction_boundary_and_remedy_cleanup():
         cleaned = _clean_clause_text(text)
         assert _is_non_requirement_heading_or_criterion(cleaned) is False, f"Erroneously filtered genuine cohesive requirement: {text}"
 
+
+def test_buyer_communication_and_template_drafting_filtering():
+    """
+    Regression Test:
+    1. Buyer/admin non-correspondence notices are filtered (not treated as bidder requirements).
+    2. Section headings with angle brackets and placeholders are filtered from requirement clauses.
+    3. Template drafting guidance and module listing lead-in notes are filtered.
+    4. Genuine bidder and system obligations remain accepted and classified.
+    """
+    from app.agents.extractor_agent import _is_non_requirement_heading_or_criterion
+
+    # 1. Buyer communication & non-correspondence disclaimers (FILTERED)
+    buyer_notices = [
+        "No individual correspondence will be made with the Bidder in this regard.",
+        "No correspondence will be entertained in this regard.",
+        "No separate correspondence will be made with unsuccessful bidders.",
+        "In this regard no individual correspondence will be made.",
+        "No further communication will be sent to unsuccessful applicants.",
+        "No correspondence will be entered into regarding the selection results."
+    ]
+    for text in buyer_notices:
+        assert _is_non_requirement_heading_or_criterion(text) is True, f"Failed to filter buyer communication notice: {text}"
+
+    # 2. Section headings with placeholders & bracketed variables (FILTERED)
+    section_headings = [
+        "3.13 Key Processes and Functional Requirement of proposed RCS- <State_Name> Portal",
+        "4.2 Technical Architecture & Infrastructure for <Department_Name>",
+        "SECTION 5: <Module_Name> Functional Specifications",
+        "3.14 Proposed ICT Platform for <Client_Agency>"
+    ]
+    for text in section_headings:
+        assert _is_non_requirement_heading_or_criterion(text) is True, f"Failed to filter section heading with placeholder: {text}"
+
+    # 3. Template drafting guidance & module listing lead-in notes (FILTERED)
+    drafting_guidelines = [
+        "Below mentioned modules needs to be prepared for COOPERATIVE SOCITIES and RCS- <State_Name> Office Registration Process (Please define/Change the registration process as per your State’s requirements Act(s) and Rules)",
+        "(Please define/Change the registration process as per your State's requirements Act(s) and Rules)",
+        "Below mentioned modules needs to be prepared for COOPERATIVE SOCITIES and RCS- <State_Name> Office",
+        "This process outlines the steps for registering a Multi-District/Village Cooperative Society with the RCS- <State_Name> office through the RCS portal.",
+        "<Define the new modules required for State integration as per Department rules>",
+        "Please specify the required modules as per your state requirements Act(s) and Rules."
+    ]
+    for text in drafting_guidelines:
+        assert _is_non_requirement_heading_or_criterion(text) is True, f"Failed to filter drafting guideline: {text}"
+
+    # 4. Genuine bidder & system obligations (PRESERVED / ACCEPTED)
+    genuine_obligations = [
+        "The applicant must have valid and verified login credentials and the user account should not be associated with any registered society.",
+        "The system will facilitate notification of status of application through SMS and email of applicant in automated mode.",
+        "The successful bidder shall enter into an Agreement with the buyer within 15 days of being notified.",
+        "The successful Bidder will be required to provide a Performance Bank Guarantee for an amount equivalent to 3% of the contract value.",
+        "The vendor must provide access for report viewing by the designated officers.",
+        "Integration with external platforms (like e-Office, UIDAI, BharatVC, SMS, Digital Signature, and others if required) shall be implemented."
+    ]
+    for text in genuine_obligations:
+        assert _is_non_requirement_heading_or_criterion(text) is False, f"Erroneously filtered genuine obligation: {text}"
+
+
+def test_rfp_pdf_with_template_placeholders_and_buyer_disclaimers_e2e():
+    """
+    End-to-End Regression Test:
+    Generates a PDF containing section headers with placeholders, drafting guidance,
+    buyer non-correspondence notices, and genuine requirements.
+    Verifies that only genuine requirements are extracted and classified.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_path = os.path.join(tmpdir, "test_template_rfp.pdf")
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = [
+            Paragraph("TENDER DOCUMENT: E-GOVERNANCE PORTAL", styles['Heading1']),
+            Paragraph("2.1 Administrative Rules", styles['Heading2']),
+            Paragraph("The bids prepared by the bidder and all documents relating to the bids shall be in the English language.", styles['Normal']),
+            Paragraph("No individual correspondence will be made with the Bidder in this regard.", styles['Normal']),
+            Paragraph("3.13 Key Processes and Functional Requirement of proposed RCS- <State_Name> Portal", styles['Heading2']),
+            Paragraph("Below mentioned modules needs to be prepared for COOPERATIVE SOCITIES and RCS- <State_Name> Office Registration Process (Please define/Change the registration process as per your State’s requirements Act(s) and Rules)", styles['Normal']),
+            Paragraph("The applicant must have valid and verified login credentials and the user account should not be associated with any registered society.", styles['Normal']),
+            Paragraph("The system will facilitate notification of status of application through SMS and email of applicant in automated mode.", styles['Normal']),
+            Paragraph("All data transmissions shall be encrypted using TLS 1.3.", styles['Normal']),
+            Paragraph("The vendor must provide 24x7 helpdesk support during the warranty period.", styles['Normal'])
+        ]
+        doc.build(story)
+
+        state: RFPProposalState = {
+            "rfp_id": "test_template_rfp",
+            "file_path": pdf_path,
+            "metadata": None,
+            "raw_clauses": [],
+            "requirements": [],
+            "compliance_matrix": [],
+            "overall_compliance_score": 0.0,
+            "risks": [],
+            "clarification_questions": [],
+            "go_nogo_decision": None,
+            "go_nogo_notes": None,
+            "proposal_drafts": [],
+            "current_version": 0,
+            "review_reports": [],
+            "revision_count": 0,
+            "max_revisions": 2,
+            "final_approval_decision": None,
+            "human_feedback": None,
+            "active_agent": "Extraction Agent",
+            "workflow_status": "EXTRACTING",
+            "logs": [],
+            "error": None
+        }
+
+        # 1. Extraction Phase
+        extract_result = extract_rfp_node(state)
+        raw_clauses = extract_result["raw_clauses"]
+        extracted_texts = [c["text"] if isinstance(c, dict) else c.text for c in raw_clauses]
+
+        # Verify false positives are completely ABSENT
+        for t in extracted_texts:
+            assert "No individual correspondence" not in t, f"False positive buyer notice extracted: {t}"
+            assert "3.13 Key Processes" not in t, f"False positive section heading extracted: {t}"
+            assert "Below mentioned modules needs to be prepared" not in t, f"False positive drafting guidance extracted: {t}"
+
+        # Verify genuine requirements ARE extracted
+        assert any("English language" in t for t in extracted_texts), "Missing English language submission requirement"
+        assert any("SMS and email" in t for t in extracted_texts), "Missing SMS/email notification requirement"
+        assert any("TLS 1.3" in t for t in extracted_texts), "Missing TLS encryption requirement"
+        assert any("24x7 helpdesk" in t for t in extracted_texts), "Missing helpdesk support requirement"
+
+        # 2. Classification Phase
+        state["raw_clauses"] = raw_clauses
+        classify_result = classify_requirements_node(state)
+        classified_reqs = classify_result["requirements"]
+
+        assert len(classified_reqs) == 4
+        for req in classified_reqs:
+            assert req["req_code"].startswith("REQ-")
+            assert req["category"] in ["Technical", "Contractual", "Delivery", "Administrative", "Submission", "Commercial"]
