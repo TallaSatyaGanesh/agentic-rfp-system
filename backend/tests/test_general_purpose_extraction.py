@@ -790,3 +790,353 @@ def test_multipage_pdf_layout_sanitation_and_toc_suppression():
             assert req["req_code"].startswith("REQ-")
             assert len(req["normalized_description"]) > 10
 
+
+def test_buyer_statements_and_legal_disclaimers_filtered():
+    """Verify that buyer statements, reservation rights, disclaimers, and procurement rights are rejected."""
+    disclaimers = [
+        "No commitment of any kind, contractual or otherwise shall exist unless and until a formal written contract has been executed.",
+        "Any notification of preferred Bidder status by the Purchaser shall not give rise to any enforceable rights by the Bidder.",
+        "This RFP supersedes and replaces any previous public documentation & communication, and Bidders should place no reliance and dependence on such communications.",
+        "The Purchaser makes no commitment, explicit or implied, that this process will result in a business transaction with anyone.",
+        "The decision of the Purchaser shall be final and binding on all matters relating to the RFP evaluation.",
+        "Purchaser's Procurement Rights: The Purchaser reserves the right to accept any proposal and to reject any or all proposals.",
+        "Failure of the successful bidder to agree with the Terms & Conditions shall constitute sufficient grounds for the annulment of the award.",
+        "The Purchaser may terminate the contract at any time for its convenience with 30 days written notice.",
+        "Corrigenda and/or addenda issued shall be deemed to be incorporated into this RFP."
+    ]
+    for line in disclaimers:
+        assert _is_non_requirement_heading_or_criterion(line) is True, f"Failed to filter buyer disclaimer: {line}"
+
+
+def test_generic_advice_and_reading_instructions_filtered():
+    """Verify that generic reading advice and study instructions are rejected."""
+    advice_lines = [
+        "Bidders are advised to study all instructions, forms, terms, requirements and other information in the RFP documents carefully.",
+        "This will lead to a reduction in the time required for bid submission process.",
+        "No correspondence will be entertained by the Authority on the rejected bids.",
+        "Bidders should get ready the bid documents to be submitted, scanned with 100 dpi which helps in reducing size of the document.",
+        "To avoid the time and effort required in uploading, bidders can use My Documents space.",
+        "Bidder should log into the website well in advance for bid submission so that bid gets uploaded well in time.",
+        "Do not lend their DSC's to others which may lead to misuse.",
+        "Prices should not be indicated in the pre-qualification bid and should only be indicated in the commercial proposal."
+    ]
+    for line in advice_lines:
+        assert _is_non_requirement_heading_or_criterion(line) is True, f"Failed to filter generic advice: {line}"
+
+
+def test_portal_and_process_mechanics_filtered():
+    """Verify that portal walkthroughs, BOQ spreadsheets, and e-procurement mechanics are rejected."""
+    mechanics_lines = [
+        "Once you pay both fee, tenders will be moved to My Tenders list.",
+        "Download the BOQ and complete the unprotected green cells with their respective financial quotes.",
+        "Server time (which is displayed on the bidders' dashboard) will be considered as the standard time for referencing the deadlines.",
+        "Bidders will be redirected to the payment gateway for online payment of tender fee.",
+        "Click Complete (i.e. after clicking submit in the portal) to generate the bid submission acknowledgement.",
+        "Upon enrolment, the bidders will be required to register their valid Digital Signature Certificate.",
+        "Only Class III certificates with signing + encryption should be registered on the portal.",
+        "The scanned copies of all original documents should be uploaded in PDF format on e-tender portal."
+    ]
+    for line in mechanics_lines:
+        assert _is_non_requirement_heading_or_criterion(line) is True, f"Failed to filter portal mechanics: {line}"
+
+
+def test_form_templates_and_proforma_declarations_filtered():
+    """Verify that form column headers, placeholder templates, and first-person proforma declarations are rejected."""
+    proforma_lines = [
+        "Madam/Sir, I, the undersigned, offer to provide services in accordance with your Request for Proposal.",
+        "We declare that our Bid Price is for the entire scope and includes all statutory taxes and duties.",
+        "KNOW ALL MEN by these presents that We, having our registered office, do hereby submit this Bank Guarantee.",
+        "We hereby nominate, constitute and appoint Shri ABC as our true and lawful attorney.",
+        "Our proposal is binding upon us and subject to modifications resulting from contract negotiations.",
+        "We understand that you are not bound to accept any proposal you may receive.",
+        "Sl# RFP Document Reference Content of RFP Requiring Clarification Points of Clarification",
+        "Name of the bidder: Address: Contact Person: Email: Phone: Mobile:",
+        "Project Citation Format: Project Name: Value of contract: Status of assignment:",
+        "Acceptance of Terms and Conditions (To be submitted on Bidder's Letter Head)",
+        "<Name of the bidder> <Amount in figures> <insert date>"
+    ]
+    for line in proforma_lines:
+        assert _is_non_requirement_heading_or_criterion(line) is True, f"Failed to filter proforma/template line: {line}"
+
+
+def test_full_multipage_pipeline_with_odisha_patterns():
+    """
+    Validation Test: Comprehensive 5-page PDF containing all 5 classes of false positives
+    alongside all 11 genuine bidder requirements (including net worth with 31.03.2025 date).
+    Verifies that:
+    1. Zero false positives from the 5 classes are extracted.
+    2. Date '31.03.2025' does NOT fragment the net worth clause.
+    3. All genuine requirements are cleanly extracted with exact source tracking.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_path = os.path.join(tmpdir, "Full_Validation_RFP.pdf")
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = []
+
+        # PAGE 1: Preamble & Buyer Disclaimers & TOC
+        story.append(Paragraph("REQUEST FOR PROPOSAL - STATE INTEGRATED PLATFORM", styles['Heading1']))
+        story.append(Paragraph("RFP Ref No.: OCAC-SEGP-SPD-0090-2025-26007", styles['Heading2']))
+        story.append(Paragraph("Date of Publication: 29.01.2026", styles['Normal']))
+        story.append(Paragraph("4.1 Volume-I [Instructions to Bidder] ........ 7", styles['Normal']))
+        story.append(Paragraph("8.3 Purchaser's Procurement Rights ........ 26", styles['Normal']))
+        story.append(Paragraph("No commitment of any kind, contractual or otherwise shall exist unless and until a formal written contract is executed.", styles['Normal']))
+        story.append(Paragraph("This RFP supersedes and replaces any previous public documentation.", styles['Normal']))
+        story.append(Paragraph("The decision of Purchaser shall be final and binding.", styles['Normal']))
+        story.append(Spacer(1, 12))
+
+        # PAGE 2: Instructions & Portal Mechanics
+        story.append(Paragraph("Section 1: General Instructions to Bidders", styles['Heading2']))
+        story.append(Paragraph("Bidders are advised to study all instructions, forms, terms and specifications in the RFP.", styles['Normal']))
+        story.append(Paragraph("Once you pay both fee, tenders will be moved to My Tenders list.", styles['Normal']))
+        story.append(Paragraph("Download the BOQ and complete the unprotected green cells with financial quotes.", styles['Normal']))
+        story.append(Paragraph("Server time displayed on the dashboard will be considered as standard time.", styles['Normal']))
+        story.append(Paragraph("Click Complete after clicking submit in the portal.", styles['Normal']))
+        # Genuine monetary instruction requirements in instructions section:
+        story.append(Paragraph("The bidder shall submit a non-refundable tender document fee of INR 11,800 online through the payment gateway.", styles['Normal']))
+        story.append(Paragraph("The proposal shall remain valid for a minimum period of 180 days from the proposal due date.", styles['Normal']))
+        story.append(Spacer(1, 12))
+
+        # PAGE 3: Prequalification Criteria (Genuine Requirements)
+        story.append(Paragraph("7.1 PREQUALIFICATION CRITERIA (GENERAL BID)", styles['Heading2']))
+        story.append(Paragraph("The bidder must be an entity registered under Companies Act with at least 5 years of operations in India and possessing valid GSTN registration.", styles['Normal']))
+        story.append(Paragraph("The bidder must have an average annual turnover of at least INR 13 Crores during the last three financial years.", styles['Normal']))
+        story.append(Paragraph("The bidder must have positive net worth as on 31.03.2025 as per audited financial statements.", styles['Normal']))
+        story.append(Paragraph("The bidder must possess a valid CMMI DEV Level 3 or higher certification as on the date of submission.", styles['Normal']))
+        story.append(Paragraph("The bidder must have successfully executed at least 1 project of value INR 5 Crores, or 2 projects of INR 4 Crores, or 3 projects of INR 2.5 Crores each in government sector.", styles['Normal']))
+        story.append(Paragraph("The bidder shall have or establish a fully operational project office in Bhubaneswar, Odisha within 30 days of award.", styles['Normal']))
+        story.append(Paragraph("The bidder must submit a Power of Attorney authorizing the signatory to sign the bid.", styles['Normal']))
+        story.append(Spacer(1, 12))
+
+        # PAGE 4: Commercial & Contractual Terms (Genuine Requirements)
+        story.append(Paragraph("Section 8: Commercial & Contractual Terms", styles['Heading2']))
+        story.append(Paragraph("The successful bidder shall furnish a Performance Bank Guarantee (PBG) equivalent to 3% of total contract value valid for 20 months.", styles['Normal']))
+        story.append(Paragraph("The proposed architecture must enforce zero trust network access, AES-256 encryption at rest, and automated daily backup.", styles['Normal']))
+        story.append(Paragraph("The vendor shall submit complete technical documentation and user training manuals prior to final user acceptance signoff.", styles['Normal']))
+        story.append(Spacer(1, 12))
+
+        # PAGE 5: Proforma & Form Templates (Must be filtered!)
+        story.append(Paragraph("9.1 PRE-QUALIFICATION BID FORMATS", styles['Heading2']))
+        story.append(Paragraph("Madam/Sir, I, the undersigned, offer to provide the services in accordance with your Request for Proposal.", styles['Normal']))
+        story.append(Paragraph("We declare that our Bid Price is for the entire scope and includes all applicable taxes.", styles['Normal']))
+        story.append(Paragraph("KNOW ALL MEN by these presents that We hereby submit our Bank Guarantee.", styles['Normal']))
+        story.append(Paragraph("Sl# RFP Document Reference Content of RFP Requiring Clarification Points of Clarification", styles['Normal']))
+        story.append(Paragraph("Name of the bidder: Address: Contact Person: Email: Phone: Mobile:", styles['Normal']))
+
+        doc.build(story)
+
+        state: RFPProposalState = {
+            "rfp_id": "test_full_pipeline_odisha",
+            "file_path": pdf_path,
+            "metadata": None,
+            "raw_clauses": [],
+            "requirements": [],
+            "compliance_matrix": [],
+            "overall_compliance_score": 0.0,
+            "risks": [],
+            "clarification_questions": [],
+            "go_nogo_decision": None,
+            "go_nogo_notes": None,
+            "proposal_drafts": [],
+            "current_version": 0,
+            "review_reports": [],
+            "revision_count": 0,
+            "max_revisions": 2,
+            "final_approval_decision": None,
+            "human_feedback": None,
+            "active_agent": "Extraction Agent",
+            "workflow_status": "EXTRACTING",
+            "logs": [],
+            "error": None
+        }
+
+        # 1. Extraction Phase
+        extract_result = extract_rfp_node(state)
+        raw_clauses = extract_result["raw_clauses"]
+
+        # Exactly 12 genuine requirements:
+        # Page 2: INR 11,800 fee, 180 days validity (2)
+        # Page 3: 5 years + GSTN, 13 Cr turnover, Net worth 31.03.2025, CMMI DEV Level 3, 1@5Cr/2@4Cr/3@2.5Cr, Odisha office, Power of Attorney (7)
+        # Page 4: PBG 3% 20 months, Zero trust architecture, Technical documentation (3)
+        # Total = 12
+        assert len(raw_clauses) == 12, f"Expected exactly 12 genuine requirements, got {len(raw_clauses)}"
+
+        all_text = " ".join(c["text"] for c in raw_clauses)
+
+        # Confirm false positives are ABSENT:
+        assert "No commitment of any kind" not in all_text
+        assert "supersedes and replaces" not in all_text
+        assert "final and binding" not in all_text
+        assert "Bidders are advised to study" not in all_text
+        assert "My Tenders" not in all_text
+        assert "Download the BOQ" not in all_text
+        assert "Server time" not in all_text
+        assert "Click Complete" not in all_text
+        assert "Madam/Sir" not in all_text
+        assert "We declare that our Bid Price" not in all_text
+        assert "KNOW ALL MEN" not in all_text
+        assert "Content of RFP Requiring Clarification" not in all_text
+
+        # Confirm genuine requirements are PRESENT:
+        assert "11,800" in all_text
+        assert "180 days" in all_text
+        assert "5 years of operations" in all_text
+        assert "13 Crores" in all_text
+        assert "positive net worth as on 31.03.2025" in all_text
+        assert "CMMI DEV Level 3" in all_text
+        assert "5 Crores" in all_text
+        assert "Bhubaneswar, Odisha" in all_text
+        assert "Power of Attorney" in all_text
+        assert "3%" in all_text and "20 months" in all_text
+        assert "zero trust network access" in all_text
+        assert "technical documentation" in all_text
+
+        # Verify net worth clause is NOT fragmented
+        nw_clauses = [c["text"] for c in raw_clauses if "net worth" in c["text"].lower()]
+        assert len(nw_clauses) == 1, f"Net worth clause was fragmented: {nw_clauses}"
+        assert "31.03.2025" in nw_clauses[0]
+
+        # 2. Classification Phase
+        state["raw_clauses"] = raw_clauses
+        classify_result = classify_requirements_node(state)
+        classified_reqs = classify_result["requirements"]
+
+        assert len(classified_reqs) == 12
+        for req in classified_reqs:
+            assert req["req_code"].startswith("REQ-")
+            assert len(req["normalized_description"]) > 10
+
+
+def test_five_newly_fixed_false_positive_families():
+    """
+    Verify filtering of the 5 newly identified false positive families:
+    1. Buyer reservation/remedy actions (PBG invocation, cancellation, notification of unsuccessful bidders)
+    2. Portal UI mechanics (uploaded documents display)
+    3. Detached table evidence cells (bare noun phrases without active obligation)
+    4. Dangling/incomplete structural fragments
+    5. First-person proforma validity declarations
+    """
+    # 1. Buyer rights & remedy actions
+    buyer_actions = [
+        "OCAC reserves the rights to reject a proposal if the bidder is found to be non-compliant.",
+        "OCAC shall invoke the performance guarantee in case of vendor breach.",
+        "In such a case, OCAC shall invoke the PBG and blacklist the agency.",
+        "Upon furnishing PBG, OCAC will notify each unsuccessful bidder and return their EMD."
+    ]
+    for text in buyer_actions:
+        assert _is_non_requirement_heading_or_criterion(text) is True, f"Failed to filter buyer action: {text}"
+
+    # 2. Portal UI mechanics
+    portal_mechanics = [
+        "Already uploaded documents in this section will be displayed.",
+        "Uploaded documents in this section can be viewed by the user."
+    ]
+    for text in portal_mechanics:
+        assert _is_non_requirement_heading_or_criterion(text) is True, f"Failed to filter portal display mechanic: {text}"
+
+    # 3. Detached table evidence cells
+    table_evidence = [
+        "Copy of Certificate of Incorporation / Registration Certificate.",
+        "Certificate from CA with Copy of Audited Balance Sheet.",
+        "§ Copy of Work Order and Client Certificate.",
+        "§ Documentary Evidence of Play Store active listing."
+    ]
+    for text in table_evidence:
+        assert _is_non_requirement_heading_or_criterion(text) is True, f"Failed to filter table evidence cell: {text}"
+
+    # 4. Dangling / incomplete fragments
+    dangling_fragments = [
+        "Bidders must:",
+        "The bidder shall:",
+        "However, the bid should comply with State ICT Policy 2022, Clause",
+        "In accordance with Section"
+    ]
+    for text in dangling_fragments:
+        assert _is_non_requirement_heading_or_criterion(text) is True, f"Failed to filter dangling fragment: {text}"
+
+    # 5. First-person proforma declarations
+    first_person_declarations = [
+        "Our proposal will be valid for acceptance up to 180 Days and I confirm that this proposal will remain binding.",
+        "I/We hereby declare that our proposal is valid for acceptance for 180 days."
+    ]
+    for text in first_person_declarations:
+        assert _is_non_requirement_heading_or_criterion(text) is True, f"Failed to filter first-person proforma declaration: {text}"
+
+    # Verify genuine active requirements remain ACCEPTED (not filtered)
+    genuine_requirements = [
+        "The bidder shall submit Power of Attorney in the prescribed format.",
+        "Copies of audited balance sheets and profit & loss statements should be enclosed with the bid.",
+        "The successful bidder shall submit Performance Bank Guarantee of 3% of contract value.",
+        "The bidder must have an average annual turnover of at least INR 13 Crores.",
+        "The bidder shall have or establish a fully operational project office in Bhubaneswar, Odisha."
+    ]
+    for text in genuine_requirements:
+        assert _is_non_requirement_heading_or_criterion(text) is False, f"Erroneously filtered genuine requirement: {text}"
+
+
+def test_targeted_extraction_boundary_and_remedy_cleanup():
+    """
+    Regression Test:
+    1. Buyer remedies (cancel order, forfeit EMD on failure) are rejected as standalone requirements.
+    2. Buyer-only requirement notices (Purchaser will require selected bidder to provide PBG) are rejected.
+    3. Buyer-side standalone acceptance form descriptions (Performance security shall be accepted in the form of...) are rejected.
+    4. Table row labels and adjacent cell fragments are cleanly stripped from genuine requirements.
+    5. Contact, address, and email header prefixes are cleanly stripped from genuine requirements.
+    6. Genuine multi-sentence obligations (EMD, PBG with MSE/Startup rule, validity) are preserved as cohesive units.
+    """
+    from app.agents.extractor_agent import _clean_clause_text
+
+    # 1. Buyer remedies rejected
+    buyer_remedies = [
+        "In case the selected bidder fails to submit performance guarantee within the time stipulated, OCAC at its discretion may cancel the order placed on the selected bidder and/or forfeit the EMD after giving prior written notice to rectify the same.",
+        "Authority at its discretion may cancel the order and forfeit the bid security deposit.",
+        "If the contractor fails to deliver, the purchaser shall forfeit the performance guarantee."
+    ]
+    for text in buyer_remedies:
+        assert _is_non_requirement_heading_or_criterion(text) is True, f"Failed to filter buyer remedy: {text}"
+
+    # 2. Buyer requirement notice / preamble rejected
+    buyer_notices = [
+        "a) OCAC will require the selected bidder to provide a Performance Bank Guarantee (PBG), within 30 days from the date of notification of award",
+        "The Purchaser will require the selected vendor to furnish a security deposit."
+    ]
+    for text in buyer_notices:
+        assert _is_non_requirement_heading_or_criterion(text) is True, f"Failed to filter buyer requirement notice: {text}"
+
+    # 3. Buyer standalone acceptance formats rejected
+    acceptance_formats = [
+        "c) Performance security shall be accepted in the form of Insurance Surety Bond, account payee demand draft, fixed deposit receipt, bank guarantee including e- Bank Guarantee from any of the scheduled commercial banks or payment online.",
+        "Payment of tender fee shall be accepted in the form of demand draft or RTGS.",
+        "For MSEs/Startups, the PBG shall be as per OGFR Guideline."
+    ]
+    for text in acceptance_formats:
+        assert _is_non_requirement_heading_or_criterion(text) is True, f"Failed to filter standalone acceptance format: {text}"
+
+    # 4. Table row label stripping
+    table_contaminated = "18 Bidder comply with State ICT Policy 2022, 11 Power of Attorney for Authorized Signatory The bidder shall submit Power of Attorney, duly authorizing the person signing the documents to sign on behalf of the bidder and thereby binding the bidder."
+    cleaned_table = _clean_clause_text(table_contaminated)
+    assert cleaned_table == "The bidder shall submit Power of Attorney, duly authorizing the person signing the documents to sign on behalf of the bidder and thereby binding the bidder."
+    assert _is_non_requirement_heading_or_criterion(cleaned_table) is False
+
+    # 5. Header / address / email prefix stripping
+    contact_contaminated = "Plot No. N-1/7-D, Acharya Vihar RRL Post Office, Bhubaneswar Odisha - 751013 gm_ocac@ocac.in f) Submission of proposal The proposals must be submitted online in the portal enivida.odisha.gov.in. Submission of proposals in other forms or portal shall not be considered. For details on submission of proposal in e-Nivida portal. For details, please refer to Clause No. 6.5 of this document."
+    cleaned_contact = _clean_clause_text(contact_contaminated)
+    assert cleaned_contact == "The proposals must be submitted online in the portal enivida.odisha.gov.in. Submission of proposals in other forms or portal shall not be considered."
+    assert _is_non_requirement_heading_or_criterion(cleaned_contact) is True
+
+    contact_with_fee = "Plot No. N-1/7-D, Acharya Vihar RRL Post Office, Bhubaneswar Odisha - 751013 gm_ocac@ocac.in The bidder must furnish along with its bid required bid processing fee amounting to ₹ 11,800/- online."
+    cleaned_fee = _clean_clause_text(contact_with_fee)
+    assert cleaned_fee == "The bidder must furnish along with its bid required bid processing fee amounting to ₹ 11,800/- online."
+    assert _is_non_requirement_heading_or_criterion(cleaned_fee) is False
+
+    # 6. Cohesive multi-sentence genuine requirements preserved
+    genuine_cohesive = [
+        "The bidder must furnish along with its bid required bid processing fee amounting to ₹ 11,800/- inclusive of GST @ 18% online through e-Nivida portal through e- Payment Gateway /or in shape of DD in favor of Odisha Computer Application Centre (OCAC), drawn in any scheduled commercial bank and payable at Bhubaneswar failing which the bid will be rejected.",
+        "Bidders shall submit, along with their Bids, EMD of Rs. 20,00,000/- (Rupees Twenty lakhs) in the shape of Bank Draft OR Bank Guarantee (in the format specified in this RFP) issued by any scheduled bank in favor of Odisha Computer Application Centre” payable at Bhubaneswar and should be valid for 90 days from the due date of the tender / RFP. The EMD should be submitted in the General Bid.",
+        "The selected bidder shall furnish a PBG equivalent to 3% of the total project cost, valid for 20 months from the date of submission. For MSEs/Startups, the PBG shall be as per OGFR Guideline.",
+        "The selected bidder shall be responsible for extending the validity date and claim period of the Performance Guarantee as and when it is due on account of non- completion of the service during the work order period."
+    ]
+    for text in genuine_cohesive:
+        cleaned = _clean_clause_text(text)
+        assert _is_non_requirement_heading_or_criterion(cleaned) is False, f"Erroneously filtered genuine cohesive requirement: {text}"
+

@@ -12,11 +12,14 @@ Rules:
 - DO NOT extract:
   * Table of Contents entries (e.g., "4.1 Volume-I ... 7", "8.3 Purchaser's Procurement Rights ... 26")
   * Section title headers (e.g. "SECTION 2: TECHNICAL REQUIREMENTS", "4.1 VOLUME-I [INSTRUCTIONS TO BIDDER]")
-  * Subsection headings or form banners (e.g. "FORM 1: BIDDER INFORMATION")
-  * Standalone document reference numbers or file IDs (e.g. "RFP Ref No.: OCAC-2026", "Tender No. 01")
+  * Subsection headings or form banners (e.g. "FORM 1: BIDDER INFORMATION", "ANNEXURE A - UNDERTAKING")
+  * Standalone document reference numbers, tender numbers, or file IDs (e.g. "RFP Ref No.: 2026-0090", "Tender No. 01")
   * Standalone publication dates or timestamp fragments (e.g. "03.02.2026 by 5:00 PM")
-  * Buyer/client institutional history and corporate background descriptions without vendor obligations
-  * Scoring/evaluation criteria with percentages (e.g. "(25%)"), or introductory preamble lines ("Proposals will be evaluated based on:")
+  * Buyer/client institutional history, background preambles, and rights/disclaimers ("No commitment of any kind shall exist...", "The decision of Purchaser shall be final...", "Purchaser's Procurement Rights", "Right to terminate for convenience")
+  * Generic advice and instructions ("Bidders are advised to study all instructions...", "This will lead to a reduction in time required...", "No correspondence will be entertained...")
+  * Portal/e-procurement mechanics & walkthroughs ("Once you pay both fee...", "Download the BOQ and fill green cells...", "Server time will be considered standard time...", "Click Complete...")
+  * Form templates, column headers, and first-person proforma declarations ("Madam/Sir, I, the undersigned...", "We declare that our Bid Price...", "Know all men by these presents...", placeholder tags like "<Name of the bidder>")
+  * Scoring/evaluation criteria with percentages (e.g. "(25%)"), marks allocations, or introductory preamble lines ("Proposals will be evaluated based on:")
 - Extract ONLY actual, substantive, actionable requirement clauses and binding bidder/system obligations (eligibility criteria, certifications, technical specs, commercial rates, SLAs, PBG/EMD, deliverables, submission formats).
 """
 

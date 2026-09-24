@@ -124,21 +124,31 @@ class DocumentParserService:
             is_toc_entry = bool(re.search(r'(?:\.{2,}|…+|\s*\.\s*\.\s*|\s*[-–—]{3,}|\t+)\s*\d+\s*$', text))
 
             # Heading detection heuristic:
-            # Genuine section headings start with section/number prefix or clean uppercase title
-            is_section_header = bool(
-                re.match(r'^(?:SECTION|CHAPTER|APPENDIX|PART|ANNEXURE|SCHEDULE|ATTACHMENT|EXHIBIT|\d+(?:\.\d+)*\.?)\s+[A-Za-z0-9\s&,\.\-–—:/()\[\]\'"’“”]+$', first_line, re.IGNORECASE)
+            # - Requires explicit section keyword or dot notation after number (e.g. "1. Introduction", "1.1 General Terms", "SECTION 1", "PART 1")
+            # - Guards against date stamps (e.g. "25.02.2026"), bracketed subtitles (e.g. "[Instructions to Bidder]"), and requirement list numbers (e.g. "3 projects not less than 2.5 Cr")
+            is_date_line = bool(re.match(r'^\s*\d{1,4}[\.\/\-]\d{1,2}[\.\/\-]\d{2,4}\b', first_line))
+            is_bracketed_subtitle = first_line.startswith(('[', '(', '<'))
+
+            is_section_header = not is_date_line and not is_bracketed_subtitle and bool(
+                (
+                    re.match(r'^(?:(?:SECTION|CHAPTER|APPENDIX|ANNEXURE|ATTACHMENT|EXHIBIT)\s+(?:(?:\d+(?:\.\d+)*|[A-Z0-9\-_]+)[:\.]?)|(?:VOLUME|PART|SCHEDULE)\s+(?:\d+(?:\.\d+)*|[A-Z]\b|[-–—:]|(?-i:[IVXLCDM]+))|\d+(?:\.\d+)+\.?|\d+\.)\s+[A-Za-z0-9\s&,\.\-–—:/()\[\]\'"’“”]+$', first_line, re.IGNORECASE)
+                    and not re.search(r'\b(?:project|projects|month|months|year|years|day|days|hour|hours|crore|cr|lakh|percent|%|shall|must|not\s+less\s+than|minimum|executive|developer|engineer|manager|architect|expert|specialist|officer|consultant|personnel|staff|manpower|resource)\b', first_line, re.IGNORECASE)
+                )
                 or (
                     first_line.isupper()
                     and 5 <= len(first_line) <= 80
                     and len(first_line.split()) >= 2
                     and not first_line.startswith("REQ-")
+                    and not first_line.endswith(':')
                     and first_line not in ["YES", "NO", "N/A", "TRUE", "FALSE", "MANDATORY", "OPTIONAL"]
+                    and not re.search(r'\b(?:PROJECT|PROJECTS|MONTH|MONTHS|YEAR|YEARS|DAY|DAYS|CRORE|CR|LAKH|SHALL|MUST|NOT\s+LESS\s+THAN|MINIMUM|DIRECTORATE|GOVERNMENT|MINISTRY|DEPARTMENT|CENTRE|CENTER|AUTHORITY|AGENCY|CORPORATION|LIMITED|LTD|COMMISSION|NOTWITHSTANDING|NOTHWITHSTANDING|IFSC|ACCOUNT|NOTE|DISCLAIMER|WHEREAS|HEREIN|HEREOF)\b', first_line)
                 )
             )
 
-            if is_section_header and len(lines) <= 2 and not is_toc_entry:
+            if is_section_header and not is_toc_entry:
                 current_section = first_line
-                is_heading = True
+                if len(lines) <= 2:
+                    is_heading = True
 
             block_type = "toc" if is_toc_entry else ("heading" if is_heading else "paragraph")
 
@@ -164,9 +174,11 @@ class DocumentParserService:
             prev_text = prev.text.rstrip()
             curr_text = b.text.lstrip()
 
-            starts_with_bullet = bool(re.match(r'^(?:[•o\-\*\uf0b7\uf0a7]|\d+[\.\)]|REQ-)', curr_text))
-            ends_with_terminal = prev_text.endswith(('.', '!', '?', ':', ';')) and not prev_text.endswith(('etc.', 'i.e.', 'e.g.', 'vs.'))
+            starts_with_bullet = bool(re.match(r'^(?:[•o\-\*\uf0b7\uf0a7§\xa7]|\d+(?:[\.\)]|\s+[A-Z])|\([0-9a-zA-Z]\)|[a-zA-Z][\.\)]|REQ-|Sl\s*#)', curr_text))
+            is_prev_contact = bool(re.search(r'(?:@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+|\b(?:post\s+office|pin\s*[-:\d]|fax\b|phone\b|mobile\b|plot\s+no)\b)', prev_text, re.IGNORECASE))
+            ends_with_terminal = prev_text.endswith(('.', '!', '?', ':', ';')) and not prev_text.endswith(('etc.', 'i.e.', 'e.g.', 'vs.', 'OR', 'AND', 'Clause', 'clause', 'Section', 'section', 'Rule', 'rule', 'Article', 'article', 'No.', 'no.'))
             ends_with_hyphen = prev_text.endswith(('-', '–', '—'))
+            ends_with_conjunction = bool(re.search(r'\b(?:OR|AND|Clause|clause|Section|section|Article|article|Rule|rule|with|for|as|on|including|to|in|of)\s*$', prev_text))
 
             if (
                 prev.page_number == b.page_number
@@ -174,7 +186,8 @@ class DocumentParserService:
                 and prev.block_type == "paragraph"
                 and b.block_type == "paragraph"
                 and not starts_with_bullet
-                and (not ends_with_terminal or ends_with_hyphen)
+                and not is_prev_contact
+                and (not ends_with_terminal or ends_with_hyphen or ends_with_conjunction)
             ):
                 if ends_with_hyphen:
                     prev.text = prev_text[:-1] + curr_text
